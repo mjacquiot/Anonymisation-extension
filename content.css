@@ -1,0 +1,463 @@
+/* Injected CSS for AnonymAI Content Script */
+
+/* 1. Restored PII Style (Green Highlight) */
+.anonym-restored {
+  color: #15803d !important; /* Tailwind green-700 */
+  font-weight: 600 !important;
+  background-color: #f0fdf4 !important; /* Tailwind green-50 */
+  padding: 1px 4px !important;
+  border-radius: 4px !important;
+  border: 1px solid #bbf7d0 !important; /* Tailwind green-200 */
+  display: inline-block !important;
+  font-family: inherit !important;
+  cursor: help !important;
+  box-shadow: 0 1px 2px rgba(21, 128, 61, 0.05) !important;
+  transition: all 0.2s ease !important;
+}
+
+.anonym-restored:hover {
+  background-color: #dcfce7 !important; /* Tailwind green-100 */
+  transform: translateY(-0.5px) !important;
+}
+
+/* 2. Floating Action Button (FAB) */
+.anonymai-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(16, 185, 129, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  cursor: pointer;
+  z-index: 999990; /* Right below overlay dialogs */
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  user-select: none;
+}
+
+.anonymai-fab:hover {
+  transform: scale(1.1) rotate(5deg);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(16, 185, 129, 0.5);
+}
+
+.anonymai-fab.anonymai-fab-active {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(239, 68, 68, 0.4);
+}
+
+.anonymai-fab-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background-color: #ef4444;
+  color: white;
+  border: 2px solid #0b0f19;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 3. Injected Sidebar Panel */
+.anonymai-panel {
+  position: fixed;
+  top: 0;
+  right: -360px; /* Hidden by default */
+  width: 350px;
+  height: 100vh;
+  background-color: #0f172a; /* Slate 900 */
+  border-left: 1px solid #334155; /* Slate 700 */
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+  z-index: 999980;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  color: #f8fafc;
+  font-family: 'Outfit', sans-serif;
+  overflow: hidden;
+  text-align: left;
+}
+
+.anonymai-panel.anonymai-panel-open {
+  right: 0;
+}
+
+/* Header */
+.anonymai-panel-header {
+  padding: 16px;
+  border-bottom: 1px solid #334155;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #0b0f19;
+}
+
+.anonymai-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.anonymai-panel-title h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(135deg, #34d399, #10b981);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.anonymai-panel-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.anonymai-panel-close:hover {
+  color: #ef4444;
+}
+
+/* Scrollable Content */
+.anonymai-panel-content {
+  padding: 16px;
+  flex-grow: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.anonymai-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.anonymai-panel-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+/* In-panel elements */
+.anonymai-context-indicator {
+  font-size: 12px;
+  color: #f8fafc;
+  line-height: 1.4;
+  background-color: #0f172a;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px dashed #334155;
+}
+
+/* Drag and Drop Zone */
+.anonymai-dropzone {
+  border: 2px dashed #475569;
+  border-radius: 8px;
+  padding: 24px 16px;
+  text-align: center;
+  background-color: rgba(15, 23, 42, 0.4);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.anonymai-dropzone:hover, .anonymai-dropzone.anonymai-dragover {
+  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.05);
+}
+
+.anonymai-dropzone-icon {
+  font-size: 32px;
+}
+
+.anonymai-dropzone-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: #cbd5e1;
+}
+
+.anonymai-dropzone-subtext {
+  font-size: 10px;
+  color: #64748b;
+}
+
+/* Text area & actions */
+.anonymai-textarea {
+  width: 100%;
+  height: 100px;
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 8px;
+  color: #f8fafc;
+  font-size: 12px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+}
+
+.anonymai-textarea:focus {
+  border-color: #10b981;
+}
+
+.anonymai-actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* Buttons */
+.anonymai-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-grow: 1;
+  transition: all 0.2s ease;
+}
+
+.anonymai-btn-primary {
+  background-color: #10b981;
+  color: #0f172a;
+}
+
+.anonymai-btn-primary:hover {
+  background-color: #34d399;
+}
+
+.anonymai-btn-secondary {
+  background-color: #334155;
+  color: #f8fafc;
+}
+
+.anonymai-btn-secondary:hover {
+  background-color: #475569;
+}
+
+/* Loading spinner */
+.anonymai-spinner-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  gap: 12px;
+}
+
+.anonymai-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(16, 185, 129, 0.1);
+  border-top-color: #10b981;
+  border-radius: 50%;
+  animation: anonymai-spin 0.8s linear infinite;
+}
+
+@keyframes anonymai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.anonymai-spinner-text {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* Footer link */
+.anonymai-panel-footer {
+  padding: 12px;
+  border-top: 1px solid #334155;
+  background-color: #0b0f19;
+  text-align: center;
+}
+
+.anonymai-footer-link {
+  color: #94a3b8;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.anonymai-footer-link:hover {
+  color: #10b981;
+}
+
+/* 4. Injected Page Toast Notification */
+.anonymai-toast-notif {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  background-color: #10b981;
+  color: #0f172a;
+  font-family: 'Outfit', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+  z-index: 999999;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.anonymai-toast-notif.anonymai-toast-show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.anonymai-toast-notif.anonymai-toast-error {
+  background-color: #ef4444;
+  color: white;
+}
+
+.anonymai-toast-notif.anonymai-toast-info {
+  background-color: #3b82f6;
+  color: white;
+}
+
+/* 5. V3 Multi-file Loaded List Styles */
+.anonymai-file-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.anonymai-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background-color: rgba(15, 23, 42, 0.3);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.anonymai-file-item:hover {
+  background-color: rgba(51, 65, 85, 0.4);
+  border-color: #475569;
+}
+
+.anonymai-file-item.anonymai-file-item-active {
+  background-color: rgba(16, 185, 129, 0.08);
+  border-color: #10b981;
+}
+
+.anonymai-file-checkbox {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: #10b981;
+}
+
+.anonymai-file-icon {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+}
+
+.anonymai-file-info {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.anonymai-file-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #f1f5f9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.anonymai-file-meta {
+  font-size: 9px;
+  color: #64748b;
+  display: flex;
+  gap: 6px;
+}
+
+.anonymai-file-status-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.anonymai-file-status-success {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.anonymai-file-status-error {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.anonymai-file-status-loading {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.anonymai-file-actions {
+  display: flex;
+  align-items: center;
+}
+
+.anonymai-file-delete-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.anonymai-file-delete-btn:hover {
+  color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+}

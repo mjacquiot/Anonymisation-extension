@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "AnonymAI - Protection Locale RGPD",
+  "version": "1.0.0",
+  "description": "Pseudonymise localement vos prompts et documents avant envoi aux IA, et restaure les correspondances de session en vert.",
+  "permissions": [
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "https://chatgpt.com/*",
+    "https://claude.ai/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AnonymAI"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "lib/fr_data.js",
+        "lib/mammoth.browser.min.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "lib/pdf.mjs",
+        "lib/pdf.worker.mjs"
+      ],
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*"
+      ]
+    }
+  ]
+}

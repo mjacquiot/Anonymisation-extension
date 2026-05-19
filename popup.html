@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anonymiseur IA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <div class="logo-icon">🛡️</div>
+        <div class="logo-text">
+          <h1>AnonymAI</h1>
+          <span class="sub-title">Protection locale RGPD</span>
+        </div>
+      </div>
+      <div class="toggle-area">
+        <label class="switch" title="Activer / Désactiver l'extension">
+          <input type="checkbox" id="global-toggle" checked>
+          <span class="slider round"></span>
+        </label>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="app-content">
+      <!-- Status Alert -->
+      <div class="status-badge" id="status-badge">
+        <span class="status-indicator"></span>
+        <span id="status-text">Actif sur cette page</span>
+      </div>
+
+      <!-- Mode Selection -->
+      <section class="section-card">
+        <div class="section-header">
+          <h2>Mode de masquage</h2>
+        </div>
+        <div class="mode-selector-group">
+          <label class="mode-option" title="Remplace les données par [PRENOM_1], [VILLE_1], etc.">
+            <input type="radio" name="pseudonym-mode" value="tokens" checked>
+            <div class="mode-desc">
+              <strong>Jetons</strong>
+              <span>[PRENOM_1], [VILLE_1]</span>
+            </div>
+          </label>
+          <label class="mode-option" title="Remplace par des faux prénoms, noms et villes réalistes.">
+            <input type="radio" name="pseudonym-mode" value="aliases">
+            <div class="mode-desc">
+              <strong>Alias réalistes</strong>
+              <span>Thierry FAURE, Nantes</span>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <!-- Quick Context Box -->
+      <section class="section-card">
+        <div class="section-header">
+          <h2>Contexte système (Invisible)</h2>
+          <span class="info-tooltip" title="Ce texte sera automatiquement ajouté au début de chaque prompt envoyé à l'IA.">ℹ️</span>
+        </div>
+        <div class="input-group">
+          <textarea id="quick-context" placeholder="Ex: Tu es un fonctionnaire territorial expert. Reste neutre et factuel..."></textarea>
+          <button id="save-context-btn" class="btn btn-primary btn-sm">Sauvegarder</button>
+        </div>
+      </section>
+
+      <!-- Active Session Mappings -->
+      <section class="section-card">
+        <div class="section-header">
+          <h2>Données pseudonymisées (Session)</h2>
+          <button id="clear-session-btn" class="btn btn-text btn-sm" title="Vider les correspondances de l'onglet courant">Effacer</button>
+        </div>
+        <div class="mapping-container" id="mapping-container">
+          <div class="empty-state">
+            <span class="empty-icon">📁</span>
+            <p>Aucune donnée pseudonymisée dans cette conversation pour l'instant.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <button id="open-options-btn" class="btn btn-secondary">
+        <span>⚙️ Options avancées</span>
+      </button>
+      <div class="footer-info">v1.0.0 • 100% Local</div>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AnonymAI - Configuration avancée</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-icon">🛡️</span>
+        <div class="brand-text">
+          <h2>AnonymAI</h2>
+          <span>Options avancées</span>
+        </div>
+      </div>
+      <nav class="sidebar-menu">
+        <button class="menu-item active" data-tab="context-tab">
+          <span class="menu-icon">📝</span> Contexte Système
+        </button>
+        <button class="menu-item" data-tab="force-tab">
+          <span class="menu-icon">⚡</span> Éléments à Forcer <span class="badge" id="force-badge-count">0</span>
+        </button>
+        <button class="menu-item" data-tab="exclude-tab">
+          <span class="menu-icon">🚫</span> Éléments à Exclure <span class="badge" id="exclude-badge-count">0</span>
+        </button>
+        <button class="menu-item" data-tab="backup-tab">
+          <span class="menu-icon">💾</span> Sauvegarde & Import
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <span>Version 1.0.0 • Traitement 100% Local</span>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <h1 id="tab-title">Contexte Système</h1>
+        <div id="toast" class="toast hidden">Paramètres enregistrés !</div>
+      </header>
+
+      <!-- Content Panels -->
+      <div class="panel-container">
+        <!-- Tab 1: System Context -->
+        <section id="context-tab" class="panel active">
+          <div class="card">
+            <div class="card-header">
+              <h2>Définir le contexte global</h2>
+              <p>Ce texte sera automatiquement injecté en haut de chaque prompt envoyé aux plateformes d'IA. Il est idéal pour définir votre rôle professionnel, des instructions de sécurité, ou des consignes de formatage sans avoir à les retaper.</p>
+            </div>
+            <div class="card-body">
+              <textarea id="system-context" placeholder="Ex: Tu es un assistant juridique territorial. Tous tes avis doivent citer les articles du Code Général des Collectivités Territoriales pertinents et exclure toute référence nominative. Reste extrêmement neutre..."></textarea>
+            </div>
+            <div class="card-footer">
+              <button id="save-context-btn" class="btn btn-primary">Enregistrer le contexte</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Mode de pseudonymisation par défaut</h2>
+              <p>Déterminez comment le texte sensible doit être masqué avant d'être envoyé aux serveurs de l'IA.</p>
+            </div>
+            <div class="card-body">
+              <div style="display: flex; gap: 24px;">
+                <label style="display: flex; align-items: flex-start; gap: 12px; cursor: pointer; flex: 1; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background-color: rgba(15, 23, 42, 0.2);">
+                  <input type="radio" name="global-pseudonym-mode" value="tokens" checked style="margin-top: 3px; accent-color: var(--accent-color);">
+                  <div>
+                    <strong style="display: block; font-size: 14px; margin-bottom: 4px; color: var(--text-primary);">Mode Jetons standard</strong>
+                    <span style="font-size: 12px; color: var(--text-secondary);">Remplace les données sensibles par des balises génériques : <code>[PRENOM_1]</code>, <code>[VILLE_1]</code>, <code>[TELEPHONE_1]</code>... Idéal pour une protection visuelle brute évidente.</span>
+                  </div>
+                </label>
+                <label style="display: flex; align-items: flex-start; gap: 12px; cursor: pointer; flex: 1; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background-color: rgba(15, 23, 42, 0.2);">
+                  <input type="radio" name="global-pseudonym-mode" value="aliases" style="margin-top: 3px; accent-color: var(--accent-color);">
+                  <div>
+                    <strong style="display: block; font-size: 14px; margin-bottom: 4px; color: var(--text-primary);">Mode Alias réalistes</strong>
+                    <span style="font-size: 12px; color: var(--text-secondary);">Génère des fausses données réalistes et crédibles : <code>Thierry FAURE</code> pour un nom, <code>Strasbourg</code> pour une ville, etc. Préserve le contexte et la fluidité de réponse de l'IA.</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 2: Elements to Force -->
+        <section id="force-tab" class="panel">
+          <div class="card">
+            <div class="card-header">
+              <h2>Forcer la pseudonymisation</h2>
+              <p>Ajoutez ici des termes spécifiques (noms de collègues, de communes spécifiques, projets confidentiels, acronymes) que vous voulez voir pseudonymisés en priorité. Le moteur les remplacera par <code>[FORCE_X]</code>.</p>
+            </div>
+            <div class="card-body">
+              <div class="add-item-form">
+                <input type="text" id="add-force-input" placeholder="Exemple : Jean-Michel Dupuis, Projet Alpha, Ville de Niort...">
+                <button id="add-force-btn" class="btn btn-primary">Ajouter</button>
+              </div>
+              <div class="search-box">
+                <input type="text" id="search-force-input" placeholder="Rechercher un terme...">
+              </div>
+              <div class="list-wrapper">
+                <ul class="items-list" id="force-list">
+                  <!-- Dynamic items -->
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 3: Elements to Exclude -->
+        <section id="exclude-tab" class="panel">
+          <div class="card">
+            <div class="card-header">
+              <h2>Exclure de la pseudonymisation</h2>
+              <p>Ajoutez ici des termes que vous souhaitez exclure systématiquement de toute pseudonymisation (ex: votre commune principale si elle est publique, des acronymes administratifs courants qui ressemblent à des noms propres). Le moteur les ignorera.</p>
+            </div>
+            <div class="card-body">
+              <div class="add-item-form">
+                <input type="text" id="add-exclude-input" placeholder="Exemple : RGPD, Mairie, Paris, CGCT...">
+                <button id="add-exclude-btn" class="btn btn-primary">Ajouter</button>
+              </div>
+              <div class="search-box">
+                <input type="text" id="search-exclude-input" placeholder="Rechercher un terme...">
+              </div>
+              <div class="list-wrapper">
+                <ul class="items-list" id="exclude-list">
+                  <!-- Dynamic items -->
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 4: Backup & JSON Import/Export -->
+        <section id="backup-tab" class="panel">
+          <div class="grid-2col">
+            <div class="card">
+              <div class="card-header">
+                <h2>Exporter les données</h2>
+                <p>Sauvegardez vos bases d'exclusion, de forçage et votre contexte système dans un fichier JSON. Utile pour prémunir vos réglages contre une éventuelle purge du stockage local par le navigateur.</p>
+              </div>
+              <div class="card-body centered-content">
+                <div class="backup-graphic">📤</div>
+                <button id="export-btn" class="btn btn-secondary btn-lg">Exporter en JSON</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <h2>Importer des données</h2>
+                <p>Restaurez vos réglages à partir d'un fichier de sauvegarde JSON précédemment exporté. Attention, cela écrasera vos paramètres locaux actuels.</p>
+              </div>
+              <div class="card-body centered-content">
+                <div class="backup-graphic">📥</div>
+                <label for="import-file" class="btn btn-primary btn-lg label-file-input">
+                  Sélectionner un fichier JSON
+                </label>
+                <input type="file" id="import-file" accept=".json" style="display: none;">
+                <span id="import-file-name" class="file-name-indicator">Aucun fichier choisi</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
