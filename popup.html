@@ -43,18 +43,29 @@
         </div>
         <div class="mode-selector-group">
           <label class="mode-option" title="Remplace les données par [PRENOM_1], [VILLE_1], etc.">
-            <input type="radio" name="pseudonym-mode" value="tokens" checked>
+            <input type="radio" name="pseudonym-mode" value="tokens">
             <div class="mode-desc">
               <strong>Jetons</strong>
               <span>[PRENOM_1], [VILLE_1]</span>
             </div>
           </label>
           <label class="mode-option" title="Remplace par des faux prénoms, noms et villes réalistes.">
-            <input type="radio" name="pseudonym-mode" value="aliases">
+            <input type="radio" name="pseudonym-mode" value="aliases" checked>
             <div class="mode-desc">
               <strong>Alias réalistes</strong>
               <span>Thierry FAURE, Nantes</span>
             </div>
+          </label>
+        </div>
+      </section>
+
+      <!-- Visual Restoration Toggle -->
+      <section class="section-card">
+        <div class="section-header">
+          <h2>Restauration visuelle (Overlay vert)</h2>
+          <label class="switch" title="Afficher le texte original en vert sur la page">
+            <input type="checkbox" id="overlay-toggle" checked>
+            <span class="slider round"></span>
           </label>
         </div>
       </section>

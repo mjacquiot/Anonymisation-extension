@@ -8,7 +8,9 @@ chrome.runtime.onInstalled.addListener(() => {
     forcedElements: [],
     excludedElements: [],
     globalContext: "",
-    enabled: true
+    enabled: true,
+    pseudonymMode: "aliases",
+    showOverlay: true
   }, (items) => {
     chrome.storage.local.set(items);
   });

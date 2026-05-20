@@ -10,6 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const systemContextTextarea = document.getElementById("system-context");
   const saveContextBtn = document.getElementById("save-context-btn");
 
+
   // Éléments à Forcer
   const addForceInput = document.getElementById("add-force-input");
   const addForceBtn = document.getElementById("add-force-btn");
@@ -79,7 +80,8 @@ document.addEventListener("DOMContentLoaded", () => {
       globalContext: "",
       forcedElements: [],
       excludedElements: [],
-      pseudonymMode: "tokens"
+      pseudonymMode: "aliases",
+      showOverlay: true
     }, (items) => {
       // Contexte
       systemContextTextarea.value = items.globalContext || "";
@@ -87,6 +89,8 @@ document.addEventListener("DOMContentLoaded", () => {
       // Mode de pseudonymisation
       const modeRadio = document.querySelector(`input[name="global-pseudonym-mode"][value="${items.pseudonymMode}"]`);
       if (modeRadio) modeRadio.checked = true;
+
+
 
       // Liste Forçage
       forcedElements = items.forcedElements || [];
@@ -110,6 +114,8 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   });
+
+
 
   // Mettre à jour les compteurs sur le menu de navigation
   function updateCounters() {

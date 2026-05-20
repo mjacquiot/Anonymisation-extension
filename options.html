@@ -72,14 +72,14 @@
             <div class="card-body">
               <div style="display: flex; gap: 24px;">
                 <label style="display: flex; align-items: flex-start; gap: 12px; cursor: pointer; flex: 1; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background-color: rgba(15, 23, 42, 0.2);">
-                  <input type="radio" name="global-pseudonym-mode" value="tokens" checked style="margin-top: 3px; accent-color: var(--accent-color);">
+                  <input type="radio" name="global-pseudonym-mode" value="tokens" style="margin-top: 3px; accent-color: var(--accent-color);">
                   <div>
                     <strong style="display: block; font-size: 14px; margin-bottom: 4px; color: var(--text-primary);">Mode Jetons standard</strong>
                     <span style="font-size: 12px; color: var(--text-secondary);">Remplace les données sensibles par des balises génériques : <code>[PRENOM_1]</code>, <code>[VILLE_1]</code>, <code>[TELEPHONE_1]</code>... Idéal pour une protection visuelle brute évidente.</span>
                   </div>
                 </label>
                 <label style="display: flex; align-items: flex-start; gap: 12px; cursor: pointer; flex: 1; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background-color: rgba(15, 23, 42, 0.2);">
-                  <input type="radio" name="global-pseudonym-mode" value="aliases" style="margin-top: 3px; accent-color: var(--accent-color);">
+                  <input type="radio" name="global-pseudonym-mode" value="aliases" checked style="margin-top: 3px; accent-color: var(--accent-color);">
                   <div>
                     <strong style="display: block; font-size: 14px; margin-bottom: 4px; color: var(--text-primary);">Mode Alias réalistes</strong>
                     <span style="font-size: 12px; color: var(--text-secondary);">Génère des fausses données réalistes et crédibles : <code>Thierry FAURE</code> pour un nom, <code>Strasbourg</code> pour une ville, etc. Préserve le contexte et la fluidité de réponse de l'IA.</span>
@@ -88,6 +88,8 @@
               </div>
             </div>
           </div>
+
+
         </section>
 
         <!-- Tab 2: Elements to Force -->

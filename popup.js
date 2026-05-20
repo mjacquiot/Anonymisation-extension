@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const clearSessionBtn = document.getElementById("clear-session-btn");
   const mappingContainer = document.getElementById("mapping-container");
   const openOptionsBtn = document.getElementById("open-options-btn");
+  const overlayToggle = document.getElementById("overlay-toggle");
 
   let currentTabId = null;
   let isAIPage = false;
@@ -32,10 +33,12 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.storage.local.get({
       enabled: true,
       globalContext: "",
-      pseudonymMode: "tokens"
+      pseudonymMode: "aliases",
+      showOverlay: true
     }, (items) => {
       // Activer/Désactiver l'interrupteur
       globalToggle.checked = items.enabled !== false;
+      overlayToggle.checked = items.showOverlay !== false;
       
       // Charger le contexte système
       quickContext.value = items.globalContext || "";
@@ -157,6 +160,18 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         }
       });
+    });
+  });
+
+  // Gérer le changement d'overlay
+  overlayToggle.addEventListener("change", () => {
+    const show = overlayToggle.checked;
+    chrome.storage.local.set({ showOverlay: show }, () => {
+      if (currentTabId) {
+        chrome.tabs.sendMessage(currentTabId, { action: "toggle_active", enabled: globalToggle.checked }, () => {
+          const err = chrome.runtime.lastError;
+        });
+      }
     });
   });
 

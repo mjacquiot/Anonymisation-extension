@@ -9,7 +9,8 @@
     globalContext: "",
     forcedElements: [],
     excludedElements: [],
-    pseudonymMode: "tokens"
+    pseudonymMode: "aliases",
+    showOverlay: true
   };
 
   // State V3 Multi-documents
@@ -22,6 +23,12 @@
   let shieldBtnEl = null;
   let isPanelOpen = false;
   let observer = null;
+
+  // Fonction utilitaire pour normaliser les accents/diacritiques
+  function removeDiacritics(str) {
+    if (!str) return "";
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
 
   // --- 1. INITIALISATION ET RÉCUPÉRATION DU TAB ID ---
   chrome.runtime.sendMessage({ action: "get_tab_id" }, (response) => {
@@ -36,12 +43,13 @@
     if (!tabId) return;
     const sessionKey = `session_tab_${tabId}`;
     
-    chrome.storage.local.get([sessionKey, "enabled", "globalContext", "forcedElements", "excludedElements", "pseudonymMode"], (data) => {
+    chrome.storage.local.get([sessionKey, "enabled", "globalContext", "forcedElements", "excludedElements", "pseudonymMode", "showOverlay"], (data) => {
       config.enabled = data.enabled !== false;
       config.globalContext = data.globalContext || "";
       config.forcedElements = data.forcedElements || [];
       config.excludedElements = data.excludedElements || [];
-      config.pseudonymMode = data.pseudonymMode || "tokens";
+      config.pseudonymMode = data.pseudonymMode || "aliases";
+      config.showOverlay = data.showOverlay !== false;
 
       if (data[sessionKey]) {
         sessionState = data[sessionKey];
@@ -73,7 +81,15 @@
       config.excludedElements = changes.excludedElements.newValue || [];
     }
     if (changes.pseudonymMode) {
-      config.pseudonymMode = changes.pseudonymMode.newValue || "tokens";
+      config.pseudonymMode = changes.pseudonymMode.newValue || "aliases";
+      needsReinit = true;
+    }
+    if (changes.showOverlay) {
+      config.showOverlay = changes.showOverlay.newValue !== false;
+      const panelToggle = document.getElementById("anonymai-overlay-toggle");
+      if (panelToggle) {
+        panelToggle.checked = config.showOverlay;
+      }
       needsReinit = true;
     }
 
@@ -111,14 +127,19 @@
   function applyState() {
     if (config.enabled) {
       injectUI();
-      startObserver();
+      if (config.showOverlay) {
+        startObserver();
+        walkAndRestore(document.body);
+      } else {
+        stopObserver();
+        removeRestoredSpans();
+      }
       startInputWatcher();
-      // Lancer une première passe de restauration des tokens sur le DOM existant
-      walkAndRestore(document.body);
     } else {
       removeUI();
       stopObserver();
       stopInputWatcher();
+      removeRestoredSpans();
     }
   }
 
@@ -135,6 +156,7 @@
     // Écouter les soumissions automatiques
     document.addEventListener("keydown", handleTextareaSubmit, true);
     document.addEventListener("click", handleSendButtonClick, true);
+    document.addEventListener("input", handleInputModify, true);
   }
 
   function stopInputWatcher() {
@@ -146,6 +168,7 @@
     window.removeEventListener("keydown", handleGlobalKeydown);
     document.removeEventListener("keydown", handleTextareaSubmit, true);
     document.removeEventListener("click", handleSendButtonClick, true);
+    document.removeEventListener("input", handleInputModify, true);
   }
 
   // Recherche de l'input d'écriture principal de l'IA
@@ -231,8 +254,6 @@
     shieldBtnEl = null;
   }
 
-  // --- 4. OPÉRATIONS D'INJECTION DE TEXTE ---
-
   // Écrit de façon sécurisée le texte dans la zone de saisie contrôlée par React
   function insertTextIntoAI(text) {
     const inputEl = findAIInput();
@@ -262,7 +283,19 @@
       const changeEvent = new Event('change', { bubbles: true, cancelable: true });
       inputEl.dispatchEvent(changeEvent);
     }
+    
+    // Marquer la zone de saisie comme ayant été anonymisée par l'extension
+    inputEl.setAttribute("data-anonymai-processed", "true");
+    
     return true;
+  }
+
+  // Événement déclenché lorsque l'utilisateur modifie la saisie manuellement
+  function handleInputModify(e) {
+    const inputEl = findAIInput();
+    if (inputEl && e.target === inputEl) {
+      inputEl.removeAttribute("data-anonymai-processed");
+    }
   }
 
   // Déclencher la pseudonymisation et injection de contexte sur l'input actif
@@ -279,30 +312,45 @@
       return;
     }
 
-    // Pseudonymisation
-    const res = globalThis.PIIEngine.pseudonymizeText(rawText, sessionState, {
+    // 1. Retirer tout préfixe de contexte système existant pour repartir sur la saisie brute
+    let actualPrompt = rawText;
+    const contextPrefixRegex = /^\[Contexte Système\s*:[^\]]*\](?:\s*\n)*/i;
+    actualPrompt = actualPrompt.replace(contextPrefixRegex, "");
+
+    // 2. Pseudonymiser la saisie utilisateur brute
+    const promptRes = globalThis.PIIEngine.pseudonymizeText(actualPrompt, sessionState, {
       forcedElements: config.forcedElements,
       excludedElements: config.excludedElements,
       pseudonymMode: config.pseudonymMode
     });
 
-    let processedText = res.pseudonymizedText;
-    sessionState = res.sessionState;
+    let processedPrompt = promptRes.pseudonymizedText;
+    sessionState = promptRes.sessionState;
 
-    // Sauvegarde en arrière plan
-    saveSessionToStorage();
-
-    // Injection de contexte invisible
+    // 3. Pseudonymiser le contexte système s'il est configuré
+    let processedContext = "";
     if (config.globalContext && config.globalContext.trim().length > 0) {
       const trimmedContext = config.globalContext.trim();
-      const prefix = `[Contexte Système : ${trimmedContext}]`;
-      if (!processedText.startsWith(prefix)) {
-        processedText = `${prefix}\n\n${processedText}`;
-      }
+      const contextRes = globalThis.PIIEngine.pseudonymizeText(trimmedContext, sessionState, {
+        forcedElements: config.forcedElements,
+        excludedElements: config.excludedElements,
+        pseudonymMode: config.pseudonymMode
+      });
+      processedContext = contextRes.pseudonymizedText.trim();
+      sessionState = contextRes.sessionState;
+    }
+
+    // 4. Sauvegarde de la session enrichie
+    saveSessionToStorage();
+
+    // 5. Reconstruire le message final avec le contexte système pseudonymisé en en-tête
+    let finalProcessedText = processedPrompt;
+    if (processedContext.length > 0) {
+      finalProcessedText = `[Contexte Système : ${processedContext}]\n\n${processedPrompt}`;
     }
 
     // Ré-injecter dans l'UI
-    insertTextIntoAI(processedText);
+    insertTextIntoAI(finalProcessedText);
     showToast("Texte pseudonymisé et contexte injecté !", "success");
   }
 
@@ -322,6 +370,12 @@
     if (e.key === "Enter" && !e.shiftKey) {
       const inputEl = findAIInput();
       if (inputEl && e.target === inputEl) {
+        if (inputEl.getAttribute("data-anonymai-processed") === "true") {
+          // Déjà traité par l'extension, laisser passer et retirer la marque pour le prochain envoi
+          inputEl.removeAttribute("data-anonymai-processed");
+          return;
+        }
+
         // Analyser s'il reste des PII non-pseudonymisées ou si le contexte manque
         let text = (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') ? inputEl.value : inputEl.innerText;
         if (!text || text.trim().length === 0) return;
@@ -330,8 +384,9 @@
         const hasContextConfig = config.globalContext && config.globalContext.trim().length > 0;
         const needsContext = hasContextConfig && !hasContextPrefix;
 
-        // Tester si le texte brut contient des PII
-        const testRes = globalThis.PIIEngine.pseudonymizeText(text, null, {
+        // Tester si le texte brut contient des PII (avec un clone pour ne pas modifier la session active)
+        const sessionStateClone = sessionState ? JSON.parse(JSON.stringify(sessionState)) : null;
+        const testRes = globalThis.PIIEngine.pseudonymizeText(text, sessionStateClone, {
           forcedElements: config.forcedElements,
           excludedElements: config.excludedElements,
           pseudonymMode: config.pseudonymMode
@@ -366,10 +421,19 @@
 
   // Intercepter l'envoi de prompt lors du clic sur le bouton d'envoi natif de la page
   function handleSendButtonClick(e) {
-    const sendBtn = findAISendButton();
-    if (sendBtn && (e.target === sendBtn || sendBtn.contains(e.target))) {
+    const clickedButton = e.target.closest("button");
+    if (!clickedButton) return;
+
+    const isSendButton = checkIfSendButton(clickedButton);
+    if (isSendButton) {
       const inputEl = findAIInput();
       if (inputEl) {
+        if (inputEl.getAttribute("data-anonymai-processed") === "true") {
+          // Déjà traité par l'extension, laisser passer et retirer la marque pour le prochain envoi
+          inputEl.removeAttribute("data-anonymai-processed");
+          return;
+        }
+
         let text = (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') ? inputEl.value : inputEl.innerText;
         if (!text || text.trim().length === 0) return;
 
@@ -377,7 +441,8 @@
         const hasContextConfig = config.globalContext && config.globalContext.trim().length > 0;
         const needsContext = hasContextConfig && !hasContextPrefix;
 
-        const testRes = globalThis.PIIEngine.pseudonymizeText(text, null, {
+        const sessionStateClone = sessionState ? JSON.parse(JSON.stringify(sessionState)) : null;
+        const testRes = globalThis.PIIEngine.pseudonymizeText(text, sessionStateClone, {
           forcedElements: config.forcedElements,
           excludedElements: config.excludedElements,
           pseudonymMode: config.pseudonymMode
@@ -391,26 +456,59 @@
           triggerTextareaPseudonymization(inputEl);
 
           setTimeout(() => {
-            const recheckBtn = findAISendButton();
-            if (recheckBtn) recheckBtn.click();
+            clickedButton.click();
           }, 150);
         }
       }
     }
   }
 
-  function findAISendButton() {
+  function checkIfSendButton(button) {
+    if (button.closest('.anonymai-ui')) return false; // Ne pas intercepter nos propres boutons
+
+    // 1. Liste des sélecteurs connus pour les boutons d'envoi
     const selectors = [
-      'button[data-testid="send-button"]', // ChatGPT
+      'button[data-testid="send-button"]',
       'button[aria-label="Send prompt"]',
-      'button.send-button', // Gemini
+      'button.send-button',
       'button[aria-label="Envoyer le message"]',
-      'button[aria-label="Send Message"]', // Claude
-      'button[aria-label="Send prompt"]'
+      'button[aria-label="Send Message"]',
+      'button[aria-label="Send prompt"]',
+      'button[aria-label*="envoyer" i]',
+      'button[aria-label*="send" i]',
+      'button[aria-label*="soumettre" i]',
+      'button[aria-label*="submit" i]',
+      'button[title*="envoyer" i]',
+      'button[title*="send" i]',
+      'button[title*="soumettre" i]',
+      'button[title*="submit" i]',
+      'button.chat-send-button',
+      'button[type="submit"]'
     ];
+
     for (const selector of selectors) {
-      const btn = document.querySelector(selector);
-      if (btn && btn.offsetWidth > 0 && btn.offsetHeight > 0 && !btn.closest('.anonymai-ui')) {
+      if (button.matches(selector)) return true;
+    }
+
+    // 2. Vérification par rapport à la proximité de la zone de texte de saisie
+    const inputEl = findAIInput();
+    if (inputEl) {
+      const commonParent = inputEl.closest('div'); // Conteneur le plus proche
+      if (commonParent && commonParent.contains(button)) {
+        const html = button.innerHTML.toLowerCase();
+        const hasSendKeyword = /envoyer|send|submit|soumettre|arrow|up|fly|paper|plane/i.test(html) || 
+                             button.innerText.toLowerCase().trim().length === 0;
+        if (hasSendKeyword) return true;
+      }
+    }
+
+    return false;
+  }
+
+  function findAISendButton() {
+    const buttons = document.querySelectorAll("button");
+    for (const btn of buttons) {
+      if (btn.offsetWidth > 0 && btn.offsetHeight > 0 && checkIfSendButton(btn)) {
         return btn;
       }
     }
@@ -496,11 +594,13 @@
       }
     }
 
-    // 2. Recherche des alias réalistes générés
+    // 2. Recherche des alias réalistes générés (insensible à la casse et aux accents)
     if (generatedAliases.length > 0) {
+      const normalizedText = removeDiacritics(text).toLowerCase();
       const sortedAliases = [...generatedAliases].sort((a, b) => b.length - a.length);
       for (const alias of sortedAliases) {
-        const index = text.toLowerCase().indexOf(alias.toLowerCase());
+        const normalizedAlias = removeDiacritics(alias).toLowerCase();
+        const index = normalizedText.indexOf(normalizedAlias);
         if (index !== -1) {
           const origValue = sessionState.mappings[alias];
           if (origValue) {
@@ -551,6 +651,20 @@
     }
   }
 
+  function removeRestoredSpans() {
+    const spans = document.querySelectorAll("span.anonym-restored");
+    spans.forEach(span => {
+      const token = span.getAttribute("data-token");
+      if (token) {
+        const textNode = document.createTextNode(token);
+        if (span.parentNode) {
+          span.parentNode.replaceChild(textNode, span);
+        }
+      }
+    });
+    document.body.normalize();
+  }
+
   // --- 6. CRÉATION ET INJECTION DU FLOATING PANEL & FAB ---
   function injectUI() {
     if (document.getElementById("anonymai-fab-el")) return;
@@ -584,6 +698,18 @@
           <div class="anonymai-context-indicator anonymai-ui" id="anonymai-context-indicator">
             Aucun contexte système configuré.
           </div>
+        </div>
+
+        <!-- Section Restauration Visuelle -->
+        <div class="anonymai-panel-section anonymai-ui" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px;">
+          <div class="anonymai-ui" style="display: flex; flex-direction: column; gap: 2px;">
+            <div class="anonymai-panel-section-title anonymai-ui" style="margin-bottom: 0; font-size: 11px;">Restauration visuelle</div>
+            <span class="anonymai-ui" style="font-size: 9px; color: #94a3b8;">Afficher le texte original en vert sur la page</span>
+          </div>
+          <label class="anonymai-switch anonymity-ui anonymai-ui">
+            <input type="checkbox" id="anonymai-overlay-toggle" ${config.showOverlay ? 'checked' : ''}>
+            <span class="anonymai-slider anonymai-ui"></span>
+          </label>
         </div>
 
         <!-- Section Drag & Drop -->
@@ -668,6 +794,17 @@
     const resultTextarea = document.getElementById("anonymai-result-text");
     const copyBtn = document.getElementById("anonymai-copy-btn");
     const injectBtn = document.getElementById("anonymai-inject-btn");
+    const overlayToggle = document.getElementById("anonymai-overlay-toggle");
+
+    if (overlayToggle) {
+      overlayToggle.addEventListener("change", () => {
+        const show = overlayToggle.checked;
+        chrome.storage.local.set({ showOverlay: show }, () => {
+          config.showOverlay = show;
+          applyState();
+        });
+      });
+    }
 
     // Toggle panel
     fabEl.addEventListener("click", () => {
@@ -863,8 +1000,8 @@
       uploadedFiles.push(newFileObj);
       addedFiles.push(newFileObj);
       
-      // Lancer l'extraction asynchrone individuelle
-      processSingleFile(file, newFileObj);
+      // Attendre la fin du traitement pour éviter les conflits d'état sessionState concurrents
+      await processSingleFile(file, newFileObj);
     }
 
     if (hadFiles || files.length > 1) {
