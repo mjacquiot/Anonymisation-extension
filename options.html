@@ -33,6 +33,9 @@
         <button class="menu-item" data-tab="backup-tab">
           <span class="menu-icon">💾</span> Sauvegarde & Import
         </button>
+        <button class="menu-item" data-tab="advanced-tab">
+          <span class="menu-icon">⚙️</span> Options Avancées
+        </button>
       </nav>
       <div class="sidebar-footer">
         <span>Version 1.0.0 • Traitement 100% Local</span>
@@ -101,7 +104,17 @@
             </div>
             <div class="card-body">
               <div class="add-item-form">
-                <input type="text" id="add-force-input" placeholder="Exemple : Jean-Michel Dupuis, Projet Alpha, Ville de Niort...">
+                <input type="text" id="add-force-input" placeholder="Exemple : Jean-Michel Dupuis, Projet Alpha, Ville de Niort..." style="flex-grow: 2;">
+                <select id="add-force-type-select">
+                  <option value="FORCE">Texte générique</option>
+                  <option value="NOM_PRENOM">Nom Complet</option>
+                  <option value="PRENOM">Prénom</option>
+                  <option value="NOM">Nom de famille</option>
+                  <option value="VILLE">Ville / Lieu</option>
+                  <option value="ORGANISATION">Collectivité / Entreprise</option>
+                  <option value="TELEPHONE">Téléphone</option>
+                  <option value="EMAIL">Email</option>
+                </select>
                 <button id="add-force-btn" class="btn btn-primary">Ajouter</button>
               </div>
               <div class="search-box">
@@ -166,6 +179,210 @@
                 </label>
                 <input type="file" id="import-file" accept=".json" style="display: none;">
                 <span id="import-file-name" class="file-name-indicator">Aucun fichier choisi</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 24px;">
+              <div style="flex: 1; padding-right: 24px;">
+                <h2 style="margin-bottom: 6px;">Sauvegarde automatique locale (JSON)</h2>
+                <p style="margin-bottom: 0;">Si activé, l'extension téléchargera discrètement une copie de sauvegarde <code>anonymai-config-auto.json</code> dans votre dossier "Téléchargements" 30 secondes après toute modification de vos réglages.</p>
+              </div>
+              <div>
+                <label class="switch-container">
+                  <input type="checkbox" id="auto-backup-toggle">
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 5: Options Avancées -->
+        <section id="advanced-tab" class="panel">
+          <!-- Tableau de Bord de Conformité -->
+          <div class="card">
+            <div class="card-header">
+              <h2>Tableau de Bord de Conformité</h2>
+              <p>Visualisez en temps réel les données sensibles (PII) détectées et protégées localement par l'extension sur vos pages d'IA.</p>
+            </div>
+            <div class="card-body">
+              <div class="stats-dashboard-grid">
+                <div class="stat-main-card">
+                  <span class="stat-main-icon">🛡️</span>
+                  <div class="stat-main-val" id="stats-total-count">0</div>
+                  <div class="stat-main-label">Éléments Protégés au Total</div>
+                </div>
+                <div class="stat-pie-card" id="stat-pie-card">
+                  <div class="pie-chart-wrapper">
+                    <svg id="pie-chart-svg" viewBox="0 0 100 100" width="140" height="140">
+                      <!-- Les tranches SVG dynamiques seront injectées ici -->
+                    </svg>
+                    <div class="pie-chart-center">
+                      <div id="pie-center-val">0</div>
+                      <div id="pie-center-label">Total</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="stats-bars-container" id="stats-bars-container">
+                  <!-- Dynamic progress bars -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Profils de Pseudonymisation -->
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+              <h2>Profils de Pseudonymisation</h2>
+              <p>Choisissez le niveau de filtrage par défaut appliqué lors de la détection automatique.</p>
+            </div>
+            <div class="card-body">
+              <div class="profile-cards-grid">
+                <label class="profile-option-card">
+                  <input type="radio" name="pseudonym-profile-option" value="light">
+                  <div class="profile-card-content">
+                    <h3>Léger</h3>
+                    <p>Filtre uniquement les noms propres et les e-mails. Idéal pour conserver la lisibilité des adresses et des entités.</p>
+                  </div>
+                </label>
+                <label class="profile-option-card">
+                  <input type="radio" name="pseudonym-profile-option" value="standard" checked>
+                  <div class="profile-card-content">
+                    <h3>Standard</h3>
+                    <p>Filtre les noms, e-mails, lieux, numéros de téléphone et organisations. Recommandé pour un usage général sécurisé.</p>
+                  </div>
+                </label>
+                <label class="profile-option-card">
+                  <input type="radio" name="pseudonym-profile-option" value="strict">
+                  <div class="profile-card-content">
+                    <h3>Strict</h3>
+                    <p>Filtre toutes les PII détectées, y compris les numéros de Sécurité Sociale, IBAN, cartes bancaires et codes postaux.</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Regex Personnalisées -->
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+              <h2>Motifs de Détection Personnalisés (Regex)</h2>
+              <p>Définissez des expressions régulières pour identifier des formats de données sensibles propres à votre organisation (codes projets, identifiants internes, etc.).</p>
+            </div>
+            <div class="card-body">
+              <div class="add-regex-form">
+                <div class="form-group">
+                  <label>Nom de la règle</label>
+                  <input type="text" id="regex-name-input" placeholder="Ex: Code Projet Client">
+                </div>
+                <div class="form-group">
+                  <label>Expression Régulière (Regex)</label>
+                  <input type="text" id="regex-pattern-input" placeholder="Ex: PROJ-[0-9]{4}">
+                </div>
+                <div class="form-group">
+                  <label>Type de Remplacement</label>
+                  <select id="regex-type-select">
+                    <option value="FORCE">Texte générique</option>
+                    <option value="NOM_PRENOM">Nom Complet</option>
+                    <option value="PRENOM">Prénom</option>
+                    <option value="NOM">Nom de famille</option>
+                    <option value="VILLE">Ville / Lieu</option>
+                    <option value="ORGANISATION">Collectivité / Entreprise</option>
+                    <option value="TELEPHONE">Téléphone</option>
+                    <option value="EMAIL">Email</option>
+                  </select>
+                </div>
+                <div class="form-group" style="display: flex; align-items: flex-end;">
+                  <button id="add-regex-btn" class="btn btn-primary" style="width: 100%;">Ajouter</button>
+                </div>
+              </div>
+              <div class="list-wrapper" style="margin-top: 20px;">
+                <ul class="items-list" id="regex-list">
+                  <!-- Dynamic regex list -->
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dictionnaires Métiers Personnalisés -->
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+              <h2>Dictionnaires Métiers Personnalisés</h2>
+              <p>Enrichissez le dictionnaire d'identification avec vos propres listes de noms de famille uniquement, lieux ou noms d'organisations spécifiques (un terme par ligne).</p>
+            </div>
+            <div class="card-body">
+              <div class="dictionaries-grid">
+                <div class="form-group">
+                  <label for="dict-names-textarea">Noms de Famille uniquement</label>
+                  <textarea id="dict-names-textarea" placeholder="Ex:&#10;DUPONT&#10;MARTIN&#10;(Renseigner uniquement les noms de famille)"></textarea>
+                </div>
+                <div class="form-group">
+                  <label for="dict-locations-textarea">Villes et Lieux</label>
+                  <textarea id="dict-locations-textarea" placeholder="Ex:&#10;Brocéliande&#10;Atlantide"></textarea>
+                </div>
+                <div class="form-group">
+                  <label for="dict-orgs-textarea">Organisations / Entreprises</label>
+                  <textarea id="dict-orgs-textarea" placeholder="Ex:&#10;Acme Corp&#10;Globex"></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <button id="save-dictionaries-btn" class="btn btn-primary">Enregistrer les dictionnaires</button>
+            </div>
+          </div>
+
+          <!-- Import en lot -->
+          <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+              <h2>Import en lot (depuis Excel, CSV, TXT)</h2>
+              <p>Importez facilement une liste d'éléments à pseudonymiser. Vous pouvez copier des colonnes directement depuis Excel (gauche : terme à pseudonymiser, droite : type de donnée) ou charger un fichier CSV/TXT/TSV.</p>
+            </div>
+            <div class="card-body">
+              <div style="display: flex; flex-direction: column; gap: 16px;">
+                <div>
+                  <label for="bulk-import-textarea" style="display: block; margin-bottom: 8px; font-weight: 500; font-size: 14px; color: var(--text-secondary);">
+                    Coller les colonnes Excel (Terme [Tabulation, Point-virgule ou Virgule] Type de donnée)
+                  </label>
+                  <textarea id="bulk-import-textarea" placeholder="Jean DUPONT&#9;nom complet&#10;Paris&#9;lieu&#10;TechCorp&#9;organisation" style="width: 100%; height: 180px; background-color: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; color: var(--text-primary); font-family: monospace; font-size: 13px; resize: vertical; outline: none;"></textarea>
+                </div>
+                
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <label for="bulk-import-file" class="btn btn-secondary" style="margin: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                      📂 Charger un fichier
+                    </label>
+                    <input type="file" id="bulk-import-file" accept=".csv,.tsv,.txt" style="display: none;">
+                    <span id="bulk-import-file-name" style="font-size: 13px; color: var(--text-secondary);">Aucun fichier sélectionné</span>
+                  </div>
+                  <button id="bulk-import-preview-btn" class="btn btn-primary">Prévisualiser</button>
+                </div>
+
+                <div id="bulk-import-preview-area" style="display: none; border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 8px;">
+                  <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--accent-color);">Aperçu de l'import (<span id="bulk-import-count">0</span> éléments détectés)</h3>
+                  
+                  <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background-color: rgba(15, 23, 42, 0.4); margin-bottom: 16px;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                      <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color); background-color: rgba(15, 23, 42, 0.8);">
+                          <th style="padding: 10px 16px; color: var(--text-secondary); font-weight: 500;">Valeur (Originale)</th>
+                          <th style="padding: 10px 16px; color: var(--text-secondary); font-weight: 500;">Type Détecté</th>
+                          <th style="padding: 10px 16px; color: var(--text-secondary); font-weight: 500;">Statut</th>
+                          <th style="padding: 10px 16px; color: var(--text-secondary); font-weight: 500;">Résoudre le conflit</th>
+                        </tr>
+                      </thead>
+                      <tbody id="bulk-import-table-body">
+                        <!-- Preview rows -->
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  <div style="display: flex; justify-content: flex-end; gap: 12px;">
+                    <button id="bulk-import-cancel-btn" class="btn btn-secondary">Annuler</button>
+                    <button id="bulk-import-confirm-btn" class="btn btn-primary" style="background-color: var(--accent-color); border-color: var(--accent-color);">Confirmer l'import</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

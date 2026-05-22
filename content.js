@@ -43,63 +43,101 @@
     if (!tabId) return;
     const sessionKey = `session_tab_${tabId}`;
     
-    chrome.storage.local.get([sessionKey, "enabled", "globalContext", "forcedElements", "excludedElements", "pseudonymMode", "showOverlay"], (data) => {
-      config.enabled = data.enabled !== false;
-      config.globalContext = data.globalContext || "";
-      config.forcedElements = data.forcedElements || [];
-      config.excludedElements = data.excludedElements || [];
-      config.pseudonymMode = data.pseudonymMode || "aliases";
-      config.showOverlay = data.showOverlay !== false;
-
-      if (data[sessionKey]) {
-        sessionState = data[sessionKey];
+    // Charger la session depuis le stockage local (spécifique à l'onglet)
+    chrome.storage.local.get([sessionKey], (localData) => {
+      if (localData[sessionKey]) {
+        sessionState = localData[sessionKey];
       } else {
         sessionState = { mappings: {}, counters: {} };
       }
 
-      applyState();
+      // Charger les configurations globales depuis le stockage synchronisé (avec fallback local)
+      const storage = chrome.storage.sync || chrome.storage.local;
+      storage.get({
+        enabled: true,
+        globalContext: "",
+        forcedElements: [],
+        excludedElements: [],
+        pseudonymMode: "aliases",
+        showOverlay: true,
+        customPatterns: [],
+        customDictionaries: { names: [], locations: [], orgs: [] },
+        pseudonymProfile: "standard"
+      }, (syncData) => {
+        config.enabled = syncData.enabled !== false;
+        config.globalContext = syncData.globalContext || "";
+        config.forcedElements = syncData.forcedElements || [];
+        config.excludedElements = syncData.excludedElements || [];
+        config.pseudonymMode = syncData.pseudonymMode || "aliases";
+        config.showOverlay = syncData.showOverlay !== false;
+        config.customPatterns = syncData.customPatterns || [];
+        config.customDictionaries = syncData.customDictionaries || { names: [], locations: [], orgs: [] };
+        config.pseudonymProfile = syncData.pseudonymProfile || "standard";
+
+        applyState();
+      });
     });
   }
 
-  // Écouteur de modifications du stockage local pour actualisation dynamique
+  // Écouteur de modifications du stockage pour actualisation dynamique
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") return;
     let needsReinit = false;
 
-    if (changes.enabled) {
-      config.enabled = changes.enabled.newValue !== false;
-      needsReinit = true;
-    }
-    if (changes.globalContext) {
-      config.globalContext = changes.globalContext.newValue || "";
-      needsReinit = true;
-    }
-    if (changes.forcedElements) {
-      config.forcedElements = changes.forcedElements.newValue || [];
-    }
-    if (changes.excludedElements) {
-      config.excludedElements = changes.excludedElements.newValue || [];
-    }
-    if (changes.pseudonymMode) {
-      config.pseudonymMode = changes.pseudonymMode.newValue || "aliases";
-      needsReinit = true;
-    }
-    if (changes.showOverlay) {
-      config.showOverlay = changes.showOverlay.newValue !== false;
-      const panelToggle = document.getElementById("anonymai-overlay-toggle");
-      if (panelToggle) {
-        panelToggle.checked = config.showOverlay;
+    // Traiter les changements de configuration globaux (sync ou local)
+    if (areaName === "sync" || areaName === "local") {
+      if (changes.enabled) {
+        config.enabled = changes.enabled.newValue !== false;
+        needsReinit = true;
       }
-      needsReinit = true;
+      if (changes.globalContext) {
+        config.globalContext = changes.globalContext.newValue || "";
+        needsReinit = true;
+      }
+      if (changes.forcedElements) {
+        config.forcedElements = changes.forcedElements.newValue || [];
+      }
+      if (changes.excludedElements) {
+        config.excludedElements = changes.excludedElements.newValue || [];
+      }
+      if (changes.pseudonymMode) {
+        config.pseudonymMode = changes.pseudonymMode.newValue || "aliases";
+        needsReinit = true;
+      }
+      if (changes.showOverlay) {
+        config.showOverlay = changes.showOverlay.newValue !== false;
+        const panelToggle = document.getElementById("anonymai-overlay-toggle");
+        if (panelToggle) {
+          panelToggle.checked = config.showOverlay;
+        }
+        needsReinit = true;
+      }
+      if (changes.customPatterns) {
+        config.customPatterns = changes.customPatterns.newValue || [];
+      }
+      if (changes.customDictionaries) {
+        config.customDictionaries = changes.customDictionaries.newValue || { names: [], locations: [], orgs: [] };
+      }
+      if (changes.pseudonymProfile) {
+        config.pseudonymProfile = changes.pseudonymProfile.newValue || "standard";
+        const profileSelect = document.getElementById("anonymai-profile-select");
+        if (profileSelect) {
+          profileSelect.value = config.pseudonymProfile;
+        }
+      }
     }
 
-    if (tabId) {
+    // La session de l'onglet est toujours stockée en local
+    if (areaName === "local" && tabId) {
       const sessionKey = `session_tab_${tabId}`;
       if (changes[sessionKey]) {
         sessionState = changes[sessionKey].newValue || { mappings: {}, counters: {} };
         updateFabBadge();
         updateMappingsList();
       }
+    }
+
+    if (areaName === "local" && changes.stats) {
+      updatePanelStats();
     }
 
     if (needsReinit) {
@@ -189,7 +227,156 @@
     return null;
   }
 
-  // Injection du bouton "🛡️ Pseudonymiser" au-dessus de l'input de l'IA
+  function findAIToolbar() {
+    // 1. Tenter d'abord de trouver la barre d'outils via le bouton d'envoi natif connu
+    const sendBtn = findAISendButton();
+    if (sendBtn) {
+      // Remonter dans le DOM et chercher un parent flex qui contient d'autres éléments interactifs (pour éviter un wrapper exclusif du bouton d'envoi)
+      let curr = sendBtn;
+      let bestToolbar = null;
+      for (let depth = 0; depth < 5; depth++) {
+        if (curr.parentElement) {
+          curr = curr.parentElement;
+          const display = window.getComputedStyle(curr).display;
+          if (display === 'flex' || display === 'inline-flex') {
+            // Compter le nombre de boutons ou d'éléments interactifs
+            const interactiveElements = curr.querySelectorAll('button, [role="button"], svg, input[type="file"]');
+            if (interactiveElements.length > 1) {
+              // C'est un conteneur flex avec plusieurs éléments interactifs, c'est la vraie barre d'outils
+              return curr;
+            }
+            if (!bestToolbar) {
+              bestToolbar = curr;
+            }
+          }
+        }
+      }
+      if (bestToolbar) return bestToolbar;
+      return sendBtn.parentElement;
+    }
+
+    // 2. Recherche par sélecteurs classiques de barres d'outils
+    const selectors = [
+      // ChatGPT: bottom bar containing action buttons
+      '#prompt-textarea ~ div.flex.items-center.justify-between',
+      '#prompt-textarea ~ div div.flex.items-center.gap-1',
+      // Claude: control panel bottom bar
+      'div[contenteditable="true"] ~ div.flex.justify-between.items-center',
+      'div[contenteditable="true"] ~ div div.flex.items-center.gap-1',
+      // Gemini: right / bottom controls
+      '.input-area-controls',
+      '.right-controls',
+      // Generic toolbar classes
+      '.toolbar',
+      '.button-bar',
+      'div[contenteditable="true"] + div div.flex',
+      '#prompt-textarea + div div.flex'
+    ];
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (el && el.offsetWidth > 0 && el.offsetHeight > 0 && !el.closest('.anonymai-ui')) {
+        return el;
+      }
+    }
+
+    // 3. Autre recherche par boutons de contrôles secondaires (mic, audio, attach, file, etc.)
+    const buttons = document.querySelectorAll("button");
+    for (const btn of buttons) {
+      if (btn.offsetWidth > 0 && btn.offsetHeight > 0 && !btn.closest('.anonymai-ui')) {
+        const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+        const title = (btn.getAttribute('title') || '').toLowerCase();
+        const isControl = ariaLabel.includes('mic') || ariaLabel.includes('audio') || 
+                          ariaLabel.includes('attach') || ariaLabel.includes('file') || 
+                          ariaLabel.includes('importer') || ariaLabel.includes('upload') ||
+                          title.includes('mic') || title.includes('audio') || 
+                          title.includes('attach') || title.includes('file') || 
+                          title.includes('importer') || title.includes('upload');
+        if (isControl) {
+          let curr = btn;
+          for (let depth = 0; depth < 5; depth++) {
+            if (curr.parentElement) {
+              curr = curr.parentElement;
+              const display = window.getComputedStyle(curr).display;
+              if (display === 'flex' || display === 'inline-flex') {
+                const interactiveElements = curr.querySelectorAll('button, [role="button"], svg, input[type="file"]');
+                if (interactiveElements.length > 1) {
+                  return curr;
+                }
+              }
+            }
+          }
+          return btn.parentElement;
+        }
+      }
+    }
+
+    // 4. Fallback historique : chercher des conteneurs flex à côté de l'input
+    const inputEl = findAIInput();
+    if (inputEl) {
+      const parent = inputEl.parentNode;
+      if (parent) {
+        const divs = parent.querySelectorAll('div');
+        for (const div of divs) {
+          if (div !== inputEl && div.offsetWidth > 0 && div.offsetHeight > 0) {
+            const hasButtons = div.querySelector('button');
+            const display = window.getComputedStyle(div).display;
+            if (hasButtons && (display === 'flex' || display === 'inline-flex')) {
+              return div;
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function updateStats(typesArray) {
+    if (!typesArray || typesArray.length === 0) return;
+    chrome.storage.local.get({ stats: {} }, (data) => {
+      const stats = data.stats || {};
+      for (const t of typesArray) {
+        stats[t] = (stats[t] || 0) + 1;
+      }
+      chrome.storage.local.set({ stats });
+    });
+  }
+
+  // Trouver un parent non clippant pour le bouton flottant (évite d'être coupé sous Gemini/ChatGPT/Claude)
+  function getNonClippingParent(inputEl) {
+    const knownContainers = [
+      '.input-area',
+      '.input-area-container',
+      '.text-input-container',
+      'form',
+      'fieldset',
+      '.flex.flex-col.w-full',
+      '.relative.flex.flex-col'
+    ];
+    for (const selector of knownContainers) {
+      const container = inputEl.closest(selector);
+      if (container) {
+        // S'assurer que le conteneur ne cache pas ses débordements (clipping)
+        const style = window.getComputedStyle(container);
+        const overflowVal = (style.overflow || '') + (style.overflowX || '') + (style.overflowY || '');
+        if (!overflowVal.includes('hidden') && !overflowVal.includes('auto') && !overflowVal.includes('scroll')) {
+          return container;
+        }
+      }
+    }
+    
+    let curr = inputEl.parentNode;
+    while (curr && curr !== document.body) {
+      const style = window.getComputedStyle(curr);
+      const overflowVal = (style.overflow || '') + (style.overflowX || '') + (style.overflowY || '');
+      if (!overflowVal.includes('hidden') && !overflowVal.includes('auto') && !overflowVal.includes('scroll')) {
+        return curr;
+      }
+      curr = curr.parentNode;
+    }
+    return inputEl.parentNode || document.body;
+  }
+
+  // Injection du bouton "🛡️ Pseudonymiser" au-dessus de l'input de l'IA (ou inline si possible)
   function injectShieldButton() {
     const inputEl = findAIInput();
     if (!inputEl) {
@@ -198,40 +385,52 @@
     }
 
     // Le bouton existe déjà
-    if (document.getElementById("anonymai-shield-btn")) return;
+    if (document.getElementById("anonymai-shield-btn") || document.getElementById("anonymai-shield-btn-inline")) return;
 
-    // Trouver le conteneur parent pour positionner le bouton de manière relative
-    const parent = inputEl.parentNode;
+    // Tenter de trouver la barre d'outils native de l'IA
+    const toolbar = findAIToolbar();
+    if (toolbar) {
+      shieldBtnEl = document.createElement("button");
+      shieldBtnEl.id = "anonymai-shield-btn-inline";
+      shieldBtnEl.className = "anonymai-ui anonymity-ui anonymai-shield-inline";
+      shieldBtnEl.innerHTML = `<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`;
+      shieldBtnEl.title = "Pseudonymiser le texte et injecter le contexte (Raccourci : Ctrl+Alt+A)";
+
+      shieldBtnEl.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerTextareaPseudonymization(inputEl);
+      });
+
+      // Injecter avant le bouton d'envoi natif ou le bouton d'envoi détecté dans la toolbar
+      const sendButton = findAISendButton() || toolbar.querySelector('[aria-label*="send" i], [aria-label*="envoyer" i], [title*="send" i], [title*="envoyer" i], .send-button');
+      if (sendButton && toolbar.contains(sendButton)) {
+        // Pour éviter DOMException, trouver le nœud enfant direct de toolbar qui contient (ou est) sendButton
+        let insertBeforeNode = sendButton;
+        while (insertBeforeNode && insertBeforeNode.parentElement !== toolbar) {
+          insertBeforeNode = insertBeforeNode.parentElement;
+        }
+        if (insertBeforeNode) {
+          toolbar.insertBefore(shieldBtnEl, insertBeforeNode);
+        } else {
+          toolbar.appendChild(shieldBtnEl);
+        }
+      } else {
+        toolbar.appendChild(shieldBtnEl);
+      }
+      return;
+    }
+
+    // Trouver le conteneur parent non-clippant pour positionner le bouton de manière relative
+    const parent = getNonClippingParent(inputEl);
     if (!parent) return;
 
-    // Créer le bouton shield
+    // Créer le bouton shield flottant
     shieldBtnEl = document.createElement("button");
     shieldBtnEl.id = "anonymai-shield-btn";
-    shieldBtnEl.className = "anonymai-ui";
-    shieldBtnEl.innerHTML = "🛡️ Pseudonymiser";
+    shieldBtnEl.className = "anonymai-ui anonymity-ui anonymai-shield-floating";
+    shieldBtnEl.innerHTML = `<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg> <span>Pseudonymiser</span>`;
     shieldBtnEl.title = "Pseudonymiser le texte et injecter le contexte (Raccourci : Ctrl+Alt+A)";
-
-    // Style du bouton flottant au-dessus de l'input
-    Object.assign(shieldBtnEl.style, {
-      position: 'absolute',
-      top: '-32px',
-      right: '12px',
-      zIndex: '9999',
-      backgroundColor: '#10b981',
-      color: '#0b0f19',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
-      borderRadius: '16px',
-      padding: '4px 10px',
-      cursor: 'pointer',
-      fontSize: '11px',
-      fontWeight: '600',
-      fontFamily: "'Outfit', sans-serif",
-      display: 'flex',
-      alignItems: 'center',
-      gap: '4px',
-      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
-      transition: 'all 0.2s ease'
-    });
 
     shieldBtnEl.addEventListener("click", (e) => {
       e.preventDefault();
@@ -249,8 +448,10 @@
   }
 
   function removeShieldButton() {
-    const btn = document.getElementById("anonymai-shield-btn");
-    if (btn) btn.remove();
+    const btn1 = document.getElementById("anonymai-shield-btn");
+    if (btn1) btn1.remove();
+    const btn2 = document.getElementById("anonymai-shield-btn-inline");
+    if (btn2) btn2.remove();
     shieldBtnEl = null;
   }
 
@@ -290,12 +491,107 @@
     return true;
   }
 
+  let inputDebounceTimeout = null;
+
   // Événement déclenché lorsque l'utilisateur modifie la saisie manuellement
   function handleInputModify(e) {
     const inputEl = findAIInput();
     if (inputEl && e.target === inputEl) {
       inputEl.removeAttribute("data-anonymai-processed");
+      
+      if (inputDebounceTimeout) clearTimeout(inputDebounceTimeout);
+      inputDebounceTimeout = setTimeout(() => {
+        analyzeInputRealtime(inputEl);
+      }, 300);
     }
+  }
+
+  // Analyse en temps réel du texte saisi pour détecter les PII et mettre à jour le panneau
+  function analyzeInputRealtime(inputEl) {
+    if (!config.enabled) return;
+    let rawText = "";
+    if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
+      rawText = inputEl.value;
+    } else {
+      rawText = inputEl.innerText;
+    }
+
+    if (!rawText || rawText.trim().length === 0) return;
+
+    // 1. Retirer tout préfixe de contexte système existant
+    let actualPrompt = rawText;
+    const contextPrefixRegex = /^\[Contexte Système\s*:[^\]]*\](?:\s*\n)*/i;
+    actualPrompt = actualPrompt.replace(contextPrefixRegex, "");
+
+    // 2. Analyser le texte (met à jour sessionState avec les nouveaux PII détectés)
+    const promptRes = globalThis.PIIEngine.pseudonymizeText(actualPrompt, sessionState, {
+      forcedElements: config.forcedElements,
+      excludedElements: config.excludedElements,
+      pseudonymMode: config.pseudonymMode,
+      customPatterns: config.customPatterns,
+      customDictionaries: config.customDictionaries,
+      pseudonymProfile: config.pseudonymProfile
+    });
+
+    sessionState = promptRes.sessionState;
+    saveSessionToStorage();
+  }
+
+  // Exclure un mot de la pseudonymisation de manière dynamique
+  function excludeWord(word) {
+    const normWord = word.trim();
+    if (!normWord) return;
+
+    // Ajouter aux exclusions de config
+    if (!config.excludedElements) config.excludedElements = [];
+    const alreadyExcluded = config.excludedElements.some(e => {
+      const ev = typeof e === "object" ? e.value : e;
+      return ev.toLowerCase() === normWord.toLowerCase();
+    });
+    if (!alreadyExcluded) {
+      config.excludedElements.push(normWord);
+    }
+
+    // Supprimer des mappings actifs de sessionState
+    if (sessionState && sessionState.mappings) {
+      let associatedToken = null;
+      for (const [key, val] of Object.entries(sessionState.mappings)) {
+        if (key.toLowerCase() === normWord.toLowerCase()) {
+          associatedToken = val;
+          delete sessionState.mappings[key];
+        } else if (val.toLowerCase() === normWord.toLowerCase()) {
+          associatedToken = key;
+          delete sessionState.mappings[key];
+        }
+      }
+      if (associatedToken) {
+        delete sessionState.mappings[associatedToken];
+        if (sessionState.generatedAliases) {
+          sessionState.generatedAliases = sessionState.generatedAliases.filter(a => a !== associatedToken);
+        }
+        if (sessionState.fullAliases) {
+          sessionState.fullAliases = sessionState.fullAliases.filter(a => a !== associatedToken);
+        }
+      }
+    }
+
+    // Sauvegarder dans le stockage Chrome et la session
+    const storage = chrome.storage.sync || chrome.storage.local;
+    storage.set({ excludedElements: config.excludedElements }, () => {
+      saveSessionToStorage();
+
+      // Ré-analyser la zone de saisie
+      const inputEl = findAIInput();
+      if (inputEl) {
+        analyzeInputRealtime(inputEl);
+      }
+
+      // Mettre à jour l'affichage vert sur la page
+      if (config.showOverlay) {
+        removeRestoredSpans();
+        walkAndRestore(document.body);
+      }
+    });
   }
 
   // Déclencher la pseudonymisation et injection de contexte sur l'input actif
@@ -321,11 +617,15 @@
     const promptRes = globalThis.PIIEngine.pseudonymizeText(actualPrompt, sessionState, {
       forcedElements: config.forcedElements,
       excludedElements: config.excludedElements,
-      pseudonymMode: config.pseudonymMode
+      pseudonymMode: config.pseudonymMode,
+      customPatterns: config.customPatterns,
+      customDictionaries: config.customDictionaries,
+      pseudonymProfile: config.pseudonymProfile
     });
 
     let processedPrompt = promptRes.pseudonymizedText;
     sessionState = promptRes.sessionState;
+    updateStats(promptRes.stats);
 
     // 3. Pseudonymiser le contexte système s'il est configuré
     let processedContext = "";
@@ -334,10 +634,14 @@
       const contextRes = globalThis.PIIEngine.pseudonymizeText(trimmedContext, sessionState, {
         forcedElements: config.forcedElements,
         excludedElements: config.excludedElements,
-        pseudonymMode: config.pseudonymMode
+        pseudonymMode: config.pseudonymMode,
+        customPatterns: config.customPatterns,
+        customDictionaries: config.customDictionaries,
+        pseudonymProfile: config.pseudonymProfile
       });
       processedContext = contextRes.pseudonymizedText.trim();
       sessionState = contextRes.sessionState;
+      updateStats(contextRes.stats);
     }
 
     // 4. Sauvegarde de la session enrichie
@@ -351,7 +655,6 @@
 
     // Ré-injecter dans l'UI
     insertTextIntoAI(finalProcessedText);
-    showToast("Texte pseudonymisé et contexte injecté !", "success");
   }
 
   // Raccourci clavier Ctrl+Alt+A
@@ -389,7 +692,10 @@
         const testRes = globalThis.PIIEngine.pseudonymizeText(text, sessionStateClone, {
           forcedElements: config.forcedElements,
           excludedElements: config.excludedElements,
-          pseudonymMode: config.pseudonymMode
+          pseudonymMode: config.pseudonymMode,
+          customPatterns: config.customPatterns,
+          customDictionaries: config.customDictionaries,
+          pseudonymProfile: config.pseudonymProfile
         });
         const hasPII = testRes.pseudonymizedText !== text;
 
@@ -445,7 +751,10 @@
         const testRes = globalThis.PIIEngine.pseudonymizeText(text, sessionStateClone, {
           forcedElements: config.forcedElements,
           excludedElements: config.excludedElements,
-          pseudonymMode: config.pseudonymMode
+          pseudonymMode: config.pseudonymMode,
+          customPatterns: config.customPatterns,
+          customDictionaries: config.customDictionaries,
+          pseudonymProfile: config.pseudonymProfile
         });
         const hasPII = testRes.pseudonymizedText !== text;
 
@@ -468,22 +777,22 @@
 
     // 1. Liste des sélecteurs connus pour les boutons d'envoi
     const selectors = [
-      'button[data-testid="send-button"]',
-      'button[aria-label="Send prompt"]',
-      'button.send-button',
-      'button[aria-label="Envoyer le message"]',
-      'button[aria-label="Send Message"]',
-      'button[aria-label="Send prompt"]',
-      'button[aria-label*="envoyer" i]',
-      'button[aria-label*="send" i]',
-      'button[aria-label*="soumettre" i]',
-      'button[aria-label*="submit" i]',
-      'button[title*="envoyer" i]',
-      'button[title*="send" i]',
-      'button[title*="soumettre" i]',
-      'button[title*="submit" i]',
-      'button.chat-send-button',
-      'button[type="submit"]'
+      '[data-testid="send-button"]',
+      '[aria-label="Send prompt"]',
+      '.send-button',
+      '[aria-label="Envoyer le message"]',
+      '[aria-label="Send Message"]',
+      '[aria-label="Send prompt"]',
+      '[aria-label*="envoyer" i]',
+      '[aria-label*="send" i]',
+      '[aria-label*="soumettre" i]',
+      '[aria-label*="submit" i]',
+      '[title*="envoyer" i]',
+      '[title*="send" i]',
+      '[title*="soumettre" i]',
+      '[title*="submit" i]',
+      '.chat-send-button',
+      '[type="submit"]'
     ];
 
     for (const selector of selectors) {
@@ -506,8 +815,8 @@
   }
 
   function findAISendButton() {
-    const buttons = document.querySelectorAll("button");
-    for (const btn of buttons) {
+    const candidates = document.querySelectorAll("button, [role='button'], [aria-label*='send' i], [aria-label*='envoyer' i], [title*='send' i], [title*='envoyer' i], .send-button");
+    for (const btn of candidates) {
       if (btn.offsetWidth > 0 && btn.offsetHeight > 0 && checkIfSendButton(btn)) {
         return btn;
       }
@@ -624,19 +933,35 @@
     span.className = "anonym-restored anonymai-ui";
     span.setAttribute("data-token", aliasOrToken);
     span.title = `Valeur originale : ${origValue} (Alias: ${aliasOrToken})`;
-    span.textContent = origValue;
+    
+    // Inject dynamic inline SVG shield and wrap text for safety
+    span.innerHTML = `
+      <svg viewBox="0 0 24 24" class="anonymai-inline-restore-shield" style="width: 11px; height: 11px; fill: none; stroke: #10b981; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; display: inline-block;">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+      </svg>
+    `;
+    const textSpan = document.createElement("span");
+    textSpan.className = "anonymai-ui";
+    textSpan.style.display = "inline";
+    textSpan.textContent = origValue;
+    span.appendChild(textSpan);
 
     // Style vert haut de gamme identique pour les deux modes
     Object.assign(span.style, {
-      color: '#2e7d32',
+      color: '#065f46',
       fontWeight: 'bold',
-      backgroundColor: '#e8f5e9',
-      padding: '2px 4px',
+      backgroundColor: '#ecfdf5',
+      padding: '2px 6px',
       borderRadius: '4px',
-      border: '1px solid #c8e6c9',
-      display: 'inline-block',
+      border: '1px solid #a7f3d0',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '4px',
       fontFamily: 'inherit',
-      cursor: 'help'
+      fontSize: 'inherit',
+      cursor: 'help',
+      verticalAlign: 'middle',
+      textDecoration: 'none'
     });
 
     const parent = textNode.parentNode;
@@ -648,7 +973,61 @@
 
       // Récurser sur la partie après
       restoreTextNode(afterNode);
+
+      // Ajouter le badge Sécurisé sur le message parent
+      addShieldBadgeToMessage(span);
     }
+  }
+
+  function addShieldBadgeToMessage(span) {
+    const messageSelectors = [
+      '[data-message-author-role="user"]',
+      '[data-testid="user-message"]',
+      '.query-text',
+      'user-query',
+      '.user-query',
+      '.message.user',
+      '.message-bubble.user',
+      'article',
+      '.message'
+    ];
+
+    let messageBubble = null;
+    for (const selector of messageSelectors) {
+      messageBubble = span.closest(selector);
+      if (messageBubble) break;
+    }
+
+    if (!messageBubble) {
+      let curr = span.parentNode;
+      for (let i = 0; i < 5 && curr; i++) {
+        if (curr.tagName === 'DIV' && (curr.className.includes('message') || curr.className.includes('bubble') || curr.className.includes('text'))) {
+          messageBubble = curr;
+          break;
+        }
+        curr = curr.parentNode;
+      }
+    }
+
+    if (!messageBubble) return;
+
+    if (messageBubble.querySelector('.anonymai-message-badge')) return;
+
+    const style = window.getComputedStyle(messageBubble);
+    if (style.position === 'static') {
+      messageBubble.style.position = 'relative';
+    }
+
+    const badge = document.createElement('div');
+    badge.className = 'anonymai-message-badge anonymai-ui';
+    badge.innerHTML = `
+      <svg viewBox="0 0 24 24" class="anonymai-message-badge-icon" style="width: 10px; height: 10px; fill: none; stroke: #10b981; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+      </svg>
+      <span>Sécurisé</span>
+    `;
+
+    messageBubble.appendChild(badge);
   }
 
   function removeRestoredSpans() {
@@ -673,7 +1052,7 @@
     fabEl = document.createElement("div");
     fabEl.id = "anonymai-fab-el";
     fabEl.className = "anonymai-fab anonymity-ui anonymai-ui";
-    fabEl.innerHTML = "🛡️";
+    fabEl.innerHTML = '<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>';
     fabEl.title = "Ouvrir l'assistant local AnonymAI";
     document.body.appendChild(fabEl);
 
@@ -685,7 +1064,7 @@
     panelEl.innerHTML = `
       <div class="anonymai-panel-header anonymai-ui">
         <div class="anonymai-panel-title anonymai-ui">
-          <span style="font-size: 20px;">🛡️</span>
+          <svg viewBox="0 0 24 24" class="anonymai-shield-icon" style="width: 20px; height: 20px; stroke: #10b981; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
           <h3>AnonymAI Assistant</h3>
         </div>
         <button class="anonymai-panel-close anonymai-ui" id="anonymai-close-btn">&times;</button>
@@ -693,67 +1072,159 @@
 
       <div class="anonymai-panel-content anonymai-ui">
         <!-- Section Contexte -->
-        <div class="anonymai-panel-section anonymai-ui">
-          <div class="anonymai-panel-section-title anonymai-ui">Contexte Actif</div>
-          <div class="anonymai-context-indicator anonymai-ui" id="anonymai-context-indicator">
-            Aucun contexte système configuré.
+        <div class="anonymai-panel-section anonymai-ui" data-section="contexte">
+          <div class="anonymai-panel-section-header anonymai-ui">
+            <span class="anonymai-panel-section-title anonymai-ui">Contexte Actif</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui">
+            <div class="anonymai-context-indicator anonymai-ui" id="anonymai-context-indicator">
+              Aucun contexte système configuré.
+            </div>
           </div>
         </div>
 
         <!-- Section Restauration Visuelle -->
-        <div class="anonymai-panel-section anonymai-ui" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px;">
-          <div class="anonymai-ui" style="display: flex; flex-direction: column; gap: 2px;">
-            <div class="anonymai-panel-section-title anonymai-ui" style="margin-bottom: 0; font-size: 11px;">Restauration visuelle</div>
-            <span class="anonymai-ui" style="font-size: 9px; color: #94a3b8;">Afficher le texte original en vert sur la page</span>
+        <div class="anonymai-panel-section anonymai-ui" data-section="restauration" style="padding: 10px 12px;">
+          <div class="anonymai-panel-section-header anonymai-ui" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%;">
+            <span class="anonymai-panel-section-title anonymai-ui" style="margin-bottom: 0; font-size: 11px;">Restauration visuelle</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
           </div>
-          <label class="anonymai-switch anonymity-ui anonymai-ui">
-            <input type="checkbox" id="anonymai-overlay-toggle" ${config.showOverlay ? 'checked' : ''}>
-            <span class="anonymai-slider anonymai-ui"></span>
-          </label>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 12px; width: 100%; margin-top: 8px;">
+            <span class="anonymai-ui" style="font-size: 9px; color: #94a3b8;">Afficher le texte original en vert sur la page</span>
+            <label class="anonymai-switch anonymity-ui anonymai-ui">
+              <input type="checkbox" id="anonymai-overlay-toggle" ${config.showOverlay ? 'checked' : ''}>
+              <span class="anonymai-slider anonymai-ui"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section Profil de Pseudonymisation -->
+        <div class="anonymai-panel-section anonymai-ui" data-section="profil-pseudonymisation" style="padding: 10px 12px;">
+          <div class="anonymai-panel-section-header anonymai-ui" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%;">
+            <span class="anonymai-panel-section-title anonymai-ui" style="margin-bottom: 0; font-size: 11px;">Profil actif</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="display: flex; flex-direction: column; gap: 6px; width: 100%; margin-top: 8px;">
+            <select id="anonymai-profile-select" class="anonymai-ui" style="width: 100%; padding: 4px; font-size: 11px; background: #1e293b; border: 1px solid #475569; color: white; border-radius: 4px;">
+              <option value="light" ${config.pseudonymProfile === 'light' ? 'selected' : ''}>Léger (Noms, E-mails)</option>
+              <option value="standard" ${config.pseudonymProfile === 'standard' || !config.pseudonymProfile ? 'selected' : ''}>Standard (Léger + Lieux, Orgs, Tél)</option>
+              <option value="strict" ${config.pseudonymProfile === 'strict' ? 'selected' : ''}>Strict (Tous types)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Section Statistiques de Protection -->
+        <div class="anonymai-panel-section anonymai-ui" data-section="stats" style="padding: 10px 12px;">
+          <div class="anonymai-panel-section-header anonymai-ui" style="display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%;">
+            <span class="anonymai-panel-section-title anonymai-ui" style="margin-bottom: 0; font-size: 11px;">Statistiques de protection</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="display: flex; flex-direction: row; align-items: center; gap: 16px; margin-top: 8px; width: 100%;">
+            <div class="anonymai-panel-pie-wrapper anonymai-ui" style="position: relative; width: 64px; height: 64px; flex-shrink: 0;">
+              <svg id="anonymai-panel-pie-svg" viewBox="0 0 100 100" width="64" height="64" class="anonymai-ui">
+                <circle cx="50" cy="50" r="35" fill="none" stroke="#334155" stroke-width="12" class="anonymai-ui"></circle>
+              </svg>
+              <div class="anonymai-panel-pie-center anonymai-ui" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; line-height: 1.1;">
+                <div id="anonymai-panel-pie-val" class="anonymai-ui" style="font-size: 12px; font-weight: 700; color: white;">0</div>
+                <div class="anonymai-ui" style="font-size: 6px; color: #94a3b8; text-transform: uppercase; font-weight: 600;">Bloqués</div>
+              </div>
+            </div>
+            <div id="anonymai-panel-stats-list" class="anonymai-ui" style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1; font-size: 10px; max-height: 64px; overflow-y: auto; padding-right: 4px;">
+              <div style="color: #94a3b8; font-style: italic; font-size: 9px; line-height: 1.4;" class="anonymai-ui">Aucune donnée protégée.</div>
+            </div>
+          </div>
         </div>
 
         <!-- Section Drag & Drop -->
-        <div class="anonymai-panel-section anonymai-ui">
-          <div class="anonymai-panel-section-title anonymai-ui">Pseudonymiser documents / dossiers</div>
-          <div class="anonymai-dropzone anonymai-ui" id="anonymai-dropzone" style="padding: 16px 12px; min-height: 80px; justify-content: center;">
-            <span class="anonymai-dropzone-icon anonymai-ui">📂</span>
-            <span class="anonymai-dropzone-text anonymai-ui">Glissez des fichiers ou un dossier ici</span>
-            <span class="anonymai-dropzone-subtext anonymai-ui">PDF, Word, Text (.txt, .docx, .pdf)</span>
-            <div class="anonymai-ui" style="margin-top: 8px; display: flex; gap: 8px; justify-content: center; width: 100%;">
-              <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-select-files-btn" style="padding: 4px 8px; font-size: 11px; flex-grow: 1;">Fichiers</button>
-              <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-select-folder-btn" style="padding: 4px 8px; font-size: 11px; flex-grow: 1;">Dossier</button>
+        <div class="anonymai-panel-section anonymai-ui" data-section="documents">
+          <div class="anonymai-panel-section-header anonymai-ui">
+            <span class="anonymai-panel-section-title anonymai-ui">Pseudonymiser documents / dossiers</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui">
+            <div class="anonymai-dropzone anonymai-ui" id="anonymai-dropzone" style="padding: 16px 12px; min-height: 80px; justify-content: center;">
+              <span class="anonymai-dropzone-icon anonymai-ui">📂</span>
+              <span class="anonymai-dropzone-text anonymai-ui">Glissez des fichiers ou un dossier ici</span>
+              <span class="anonymai-dropzone-subtext anonymai-ui">PDF, Word, Text (.txt, .docx, .pdf)</span>
+              <div class="anonymai-ui" style="margin-top: 8px; display: flex; gap: 8px; justify-content: center; width: 100%;">
+                <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-select-files-btn" style="padding: 4px 8px; font-size: 11px; flex-grow: 1;">Fichiers</button>
+                <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-select-folder-btn" style="padding: 4px 8px; font-size: 11px; flex-grow: 1;">Dossier</button>
+              </div>
+              <input type="file" id="anonymai-file-input" accept=".txt,.csv,.md,.pdf,.docx" multiple style="display:none;">
+              <input type="file" id="anonymai-folder-input" webkitdirectory directory style="display:none;">
             </div>
-            <input type="file" id="anonymai-file-input" accept=".txt,.csv,.md,.pdf,.docx" multiple style="display:none;">
-            <input type="file" id="anonymai-folder-input" webkitdirectory directory style="display:none;">
           </div>
         </div>
 
         <!-- Section Liste de documents V3 -->
-        <div class="anonymai-panel-section anonymai-ui" id="anonymai-file-list-section" style="display: none; max-height: 180px; overflow-y: auto;">
-          <div class="anonymai-panel-section-title anonymai-ui" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span>Documents chargés</span>
-            <button id="anonymai-clear-files-btn" class="anonymai-ui" style="background: none; border: none; color: #ef4444; font-size: 10px; cursor: pointer; font-weight: 600; padding: 0;">Vider la liste</button>
+        <div class="anonymai-panel-section anonymai-ui" id="anonymai-file-list-section" data-section="documents-charges" style="display: none; max-height: 180px; overflow-y: auto;">
+          <div class="anonymai-panel-section-header anonymai-ui" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <span class="anonymai-panel-section-title anonymai-ui" style="margin-bottom: 0; display: flex; justify-content: space-between; align-items: center; width: calc(100% - 20px);">
+              <span>Documents chargés</span>
+              <button id="anonymai-clear-files-btn" class="anonymai-ui" style="background: none; border: none; color: #ef4444; font-size: 10px; cursor: pointer; font-weight: 600; padding: 0;">Vider la liste</button>
+            </span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
           </div>
-          <div id="anonymai-file-list" class="anonymai-file-list-container anonymai-ui">
-            <!-- Fichiers ajoutés dynamiquement -->
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="margin-top: 8px;">
+            <div id="anonymai-file-list" class="anonymai-file-list-container anonymai-ui">
+              <!-- Fichiers ajoutés dynamiquement -->
+            </div>
           </div>
         </div>
 
         <!-- Section Textarea résultat -->
-        <div class="anonymai-panel-section anonymai-ui" style="flex-grow: 1; display: flex; flex-direction: column;">
-          <div class="anonymai-panel-section-title anonymai-ui">Texte pseudonymisé</div>
-          <textarea class="anonymai-textarea anonymai-ui" id="anonymai-result-text" placeholder="Le texte extrait apparaîtra ici et sera automatiquement pseudonymisé..."></textarea>
-          <div class="anonymai-actions-row anonymai-ui" style="margin-top: 8px;">
-            <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-copy-btn">Copier</button>
-            <button class="anonymai-btn anonymai-btn-primary anonymai-ui" id="anonymai-inject-btn">Injecter</button>
+        <div class="anonymai-panel-section anonymai-ui" data-section="resultat" style="flex-grow: 1; display: flex; flex-direction: column;">
+          <div class="anonymai-panel-section-header anonymai-ui">
+            <span class="anonymai-panel-section-title anonymai-ui">Texte pseudonymisé</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="flex-grow: 1; display: flex; flex-direction: column; margin-top: 8px;">
+            <textarea class="anonymai-textarea anonymai-ui" id="anonymai-result-text" placeholder="Le texte extrait apparaîtra ici et sera automatiquement pseudonymisé..." style="flex-grow: 1; min-height: 100px;"></textarea>
+            <div class="anonymai-actions-row anonymai-ui" style="margin-top: 8px;">
+              <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-copy-btn">Copier</button>
+              <button class="anonymai-btn anonymai-btn-primary anonymai-ui" id="anonymai-inject-btn">Injecter</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section Ajouter/Forcer un élément -->
+        <div class="anonymai-panel-section anonymai-ui" data-section="forcer-exclure" style="padding: 10px 12px; border-bottom: 1px solid #334155;">
+          <div class="anonymai-panel-section-header anonymai-ui">
+            <span class="anonymai-panel-section-title anonymai-ui">Forcer/Exclure un élément</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="margin-top: 8px;">
+            <div class="anonymai-ui" style="display: flex; flex-direction: column; gap: 6px;">
+              <input type="text" id="anonymai-manual-word-input" class="anonymai-ui" placeholder="Entrez un mot à traiter..." style="width: 100%; padding: 4px 8px; font-size: 11px; background: #1e293b; border: 1px solid #475569; color: white; border-radius: 4px; box-sizing: border-box;">
+              <div class="anonymai-ui" style="display: flex; gap: 6px; align-items: center; justify-content: space-between;">
+                <select id="anonymai-manual-type-select" class="anonymai-ui" style="flex-grow: 1; padding: 4px; font-size: 11px; background: #1e293b; border: 1px solid #475569; color: white; border-radius: 4px;">
+                  <option value="FORCE">Texte générique</option>
+                  <option value="NOM_PRENOM">Nom Complet</option>
+                  <option value="PRENOM">Prénom</option>
+                  <option value="NOM">Nom de famille</option>
+                  <option value="VILLE">Ville / Lieu</option>
+                  <option value="ORGANISATION">Collectivité / Entreprise</option>
+                  <option value="TELEPHONE">Téléphone</option>
+                  <option value="EMAIL">Email</option>
+                </select>
+                <button class="anonymai-btn anonymai-ui" id="anonymai-manual-force-btn" style="padding: 4px 8px; font-size: 11px; background-color: #10b981; border: none; color: #0b0f19; font-weight:600; cursor: pointer; border-radius: 4px;">Forcer</button>
+                <button class="anonymai-btn anonymai-ui" id="anonymai-manual-exclude-btn" style="padding: 4px 8px; font-size: 11px; background-color: #ef4444; color: white; border: none; font-weight:600; cursor: pointer; border-radius: 4px;">Exclure</button>
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- Section Mappings en cours -->
-        <div class="anonymai-panel-section anonymai-ui" style="max-height: 150px; overflow-y: auto;">
-          <div class="anonymai-panel-section-title anonymai-ui">Correspondances Actives</div>
-          <div id="anonymai-mappings-list" class="anonymai-ui" style="font-size: 11px; font-family: monospace; display: flex; flex-direction: column; gap: 4px;">
-            <!-- Rempli dynamiquement -->
+        <div class="anonymai-panel-section anonymai-ui" data-section="correspondances" style="max-height: 150px; overflow-y: auto;">
+          <div class="anonymai-panel-section-header anonymai-ui">
+            <span class="anonymai-panel-section-title anonymai-ui">Correspondances Actives</span>
+            <span class="anonymai-collapse-arrow anonymai-ui">▼</span>
+          </div>
+          <div class="anonymai-section-body anonymity-ui anonymai-ui" style="margin-top: 8px;">
+            <div id="anonymai-mappings-list" class="anonymai-ui" style="font-size: 11px; font-family: monospace; display: flex; flex-direction: column; gap: 4px;">
+              <!-- Rempli dynamiquement -->
+            </div>
           </div>
         </div>
       </div>
@@ -765,12 +1236,26 @@
 
     document.body.appendChild(panelEl);
 
+    // Appliquer les états repliés sauvegardés
+    chrome.storage.local.get({ collapsedSections: {} }, (result) => {
+      const collapsed = result.collapsedSections || {};
+      Object.entries(collapsed).forEach(([secId, isCollapsed]) => {
+        if (isCollapsed) {
+          const section = panelEl.querySelector(`.anonymai-panel-section[data-section="${secId}"]`);
+          if (section) {
+            section.classList.add("anonymai-section-collapsed");
+          }
+        }
+      });
+    });
+
     // Attacher les écouteurs d'événements UI
     setupUIListeners();
     updateFabBadge();
     updateContextIndicator();
     updateMappingsList();
     renderFilesList();
+    updatePanelStats();
   }
 
   function removeUI() {
@@ -799,9 +1284,29 @@
     if (overlayToggle) {
       overlayToggle.addEventListener("change", () => {
         const show = overlayToggle.checked;
-        chrome.storage.local.set({ showOverlay: show }, () => {
+        const storage = chrome.storage.sync || chrome.storage.local;
+        storage.set({ showOverlay: show }, () => {
           config.showOverlay = show;
           applyState();
+        });
+      });
+    }
+
+    const profileSelect = document.getElementById("anonymai-profile-select");
+    if (profileSelect) {
+      profileSelect.addEventListener("change", () => {
+        const profile = profileSelect.value;
+        const storage = chrome.storage.sync || chrome.storage.local;
+        storage.set({ pseudonymProfile: profile }, () => {
+          config.pseudonymProfile = profile;
+          const inputEl = findAIInput();
+          if (inputEl) {
+            analyzeInputRealtime(inputEl);
+          }
+          if (config.showOverlay) {
+            removeRestoredSpans();
+            walkAndRestore(document.body);
+          }
         });
       });
     }
@@ -811,14 +1316,16 @@
       isPanelOpen = !isPanelOpen;
       panelEl.classList.toggle("anonymai-panel-open", isPanelOpen);
       fabEl.classList.toggle("anonymai-fab-active", isPanelOpen);
-      fabEl.innerHTML = isPanelOpen ? "&times;" : "🛡️";
+      fabEl.innerHTML = isPanelOpen 
+        ? '<svg viewBox="0 0 24 24" class="anonymai-close-icon"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>' 
+        : '<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>';
     });
 
     closeBtn.addEventListener("click", () => {
       isPanelOpen = false;
       panelEl.classList.remove("anonymai-panel-open");
       fabEl.classList.remove("anonymai-fab-active");
-      fabEl.innerHTML = "🛡️";
+      fabEl.innerHTML = '<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>';
     });
 
     optionsLink.addEventListener("click", (e) => {
@@ -873,7 +1380,8 @@
       }
     });
 
-    clearFilesBtn.addEventListener("click", () => {
+    clearFilesBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
       uploadedFiles = [];
       activeFileId = null;
       renderFilesList();
@@ -902,8 +1410,115 @@
         isPanelOpen = false;
         panelEl.classList.remove("anonymai-panel-open");
         fabEl.classList.remove("anonymai-fab-active");
-        fabEl.innerHTML = "🛡️";
+        fabEl.innerHTML = '<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>';
       }
+    });
+
+    const manualInput = document.getElementById("anonymai-manual-word-input");
+    const manualTypeSelect = document.getElementById("anonymai-manual-type-select");
+    const manualForceBtn = document.getElementById("anonymai-manual-force-btn");
+    const manualExcludeBtn = document.getElementById("anonymai-manual-exclude-btn");
+
+    if (manualForceBtn && manualInput) {
+      manualForceBtn.addEventListener("click", () => {
+        const val = manualInput.value.trim();
+        if (!val) return;
+
+        const type = manualTypeSelect.value;
+        
+        // Retirer des exclusions si présent
+        if (config.excludedElements) {
+          config.excludedElements = config.excludedElements.filter(e => {
+            const ev = typeof e === "object" ? e.value : e;
+            return ev.toLowerCase() !== val.toLowerCase();
+          });
+        }
+
+        // Ajouter aux forçages
+        if (!config.forcedElements) config.forcedElements = [];
+        // Vérifier s'il y est déjà
+        const alreadyExists = config.forcedElements.some(e => {
+          const ev = typeof e === "object" ? e.value : e;
+          return ev.toLowerCase() === val.toLowerCase();
+        });
+
+        if (!alreadyExists) {
+          config.forcedElements.push({ value: val, type: type });
+        } else {
+          // Mettre à jour le type si déjà existant
+          config.forcedElements = config.forcedElements.map(e => {
+            const ev = typeof e === "object" ? e.value : e;
+            if (ev.toLowerCase() === val.toLowerCase()) {
+              return { value: val, type: type };
+            }
+            return e;
+          });
+        }
+
+        const storage = chrome.storage.sync || chrome.storage.local;
+        storage.set({ 
+          forcedElements: config.forcedElements,
+          excludedElements: config.excludedElements || []
+        }, () => {
+          manualInput.value = "";
+          
+          // Ré-analyser la zone de saisie
+          const inputEl = findAIInput();
+          if (inputEl) {
+            analyzeInputRealtime(inputEl);
+          }
+          
+          // Rafraîchir les surbrillances vertes sur la page
+          if (config.showOverlay) {
+            removeRestoredSpans();
+            walkAndRestore(document.body);
+          }
+        });
+      });
+    }
+
+    if (manualExcludeBtn && manualInput) {
+      manualExcludeBtn.addEventListener("click", () => {
+        const val = manualInput.value.trim();
+        if (!val) return;
+
+        // Retirer des forçages si présent
+        if (config.forcedElements) {
+          config.forcedElements = config.forcedElements.filter(e => {
+            const ev = typeof e === "object" ? e.value : e;
+            return ev.toLowerCase() !== val.toLowerCase();
+          });
+        }
+
+        const storage = chrome.storage.sync || chrome.storage.local;
+        storage.set({ forcedElements: config.forcedElements }, () => {
+          excludeWord(val);
+          manualInput.value = "";
+        });
+      });
+    }
+
+    // Collapsible sections in panel
+    const headers = panelEl.querySelectorAll(".anonymai-panel-section-header");
+    headers.forEach(header => {
+      header.addEventListener("click", (e) => {
+        // Prevent collapse when clicking inputs, selects or buttons inside headers (e.g. vider la liste)
+        if (e.target.closest("button") || e.target.closest("input") || e.target.closest("select")) {
+          return;
+        }
+        const section = header.closest(".anonymai-panel-section");
+        if (!section) return;
+        const secId = section.getAttribute("data-section");
+        if (!secId) return;
+        const isCollapsed = section.classList.toggle("anonymai-section-collapsed");
+        
+        // Save state to chrome.storage.local
+        chrome.storage.local.get({ collapsedSections: {} }, (result) => {
+          const collapsed = result.collapsedSections || {};
+          collapsed[secId] = isCollapsed;
+          chrome.storage.local.set({ collapsedSections: collapsed });
+        });
+      });
     });
   }
 
@@ -946,6 +1561,172 @@
     }
   }
 
+  function updatePanelStats() {
+    chrome.storage.local.get({ stats: {} }, (data) => {
+      const stats = data.stats || {};
+      let total = 0;
+      for (const val of Object.values(stats)) {
+        total += val;
+      }
+      
+      const pieCenterVal = document.getElementById("anonymai-panel-pie-val");
+      if (pieCenterVal) {
+        pieCenterVal.textContent = total;
+      }
+      
+      const categoryLabels = {
+        "NOM_PRENOM": "Noms complets",
+        "PRENOM": "Prénoms",
+        "NOM": "Noms de famille",
+        "EMAIL": "Emails",
+        "TELEPHONE": "Téléphones",
+        "VILLE": "Villes / Lieux",
+        "ORGANISATION": "Organisations",
+        "SECURE_SOCIALE": "Séc. Sociale",
+        "IBAN": "IBANs",
+        "CARTE_BANCAIRE": "Cartes Bancaires",
+        "CODE_POSTAL": "Codes Postaux",
+        "FORCE": "Termes forcés"
+      };
+      
+      const categoryColors = {
+        "NOM_PRENOM": "#10b981",    // Emerald
+        "PRENOM": "#14b8a6",        // Teal
+        "NOM": "#06b6d4",           // Cyan
+        "EMAIL": "#3b82f6",         // Blue
+        "TELEPHONE": "#6366f1",     // Indigo
+        "VILLE": "#8b5cf6",         // Violet
+        "ORGANISATION": "#d946ef",  // Fuchsia
+        "SECURE_SOCIALE": "#f43f5e",// Rose
+        "IBAN": "#f59e0b",          // Amber
+        "CARTE_BANCAIRE": "#f97316",// Orange
+        "CODE_POSTAL": "#0ea5e9",   // Sky
+        "FORCE": "#64748b"          // Slate
+      };
+      
+      const defaultColor = "#cbd5e1";
+      
+      // Rendu du Camembert SVG
+      const svgEl = document.getElementById("anonymai-panel-pie-svg");
+      if (svgEl) {
+        svgEl.innerHTML = "";
+        
+        if (total === 0) {
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", "50");
+          circle.setAttribute("cy", "50");
+          circle.setAttribute("r", "35");
+          circle.setAttribute("fill", "none");
+          circle.setAttribute("stroke", "#334155");
+          circle.setAttribute("stroke-width", "12");
+          circle.setAttribute("class", "anonymai-ui");
+          svgEl.appendChild(circle);
+        } else {
+          const sortedStats = Object.entries(stats)
+            .filter(([_, count]) => count > 0)
+            .sort((a, b) => b[1] - a[1]);
+            
+          const C = 219.911; // 2 * PI * r (r=35)
+          let accumulatedOffset = 0;
+          
+          sortedStats.forEach(([cat, count]) => {
+            const percentage = (count / total) * 100;
+            const sliceLength = (count / total) * C;
+            const color = categoryColors[cat] || defaultColor;
+            const label = categoryLabels[cat] || cat;
+            
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("cx", "50");
+            circle.setAttribute("cy", "50");
+            circle.setAttribute("r", "35");
+            circle.setAttribute("fill", "none");
+            circle.setAttribute("stroke", color);
+            circle.setAttribute("stroke-width", "12");
+            circle.setAttribute("stroke-dasharray", `${sliceLength} ${C}`);
+            circle.setAttribute("stroke-dashoffset", `${C - accumulatedOffset}`);
+            circle.setAttribute("transform", "rotate(-90 50 50)");
+            circle.setAttribute("class", "anonymai-ui anonymai-panel-pie-slice");
+            circle.style.cursor = "pointer";
+            
+            circle.addEventListener("mouseenter", () => {
+              if (pieCenterVal) {
+                pieCenterVal.textContent = `${percentage.toFixed(0)}%`;
+              }
+            });
+            circle.addEventListener("mouseleave", () => {
+              if (pieCenterVal) {
+                pieCenterVal.textContent = total;
+              }
+            });
+            
+            svgEl.appendChild(circle);
+            accumulatedOffset += sliceLength;
+          });
+        }
+      }
+      
+      // Rendu de la liste
+      const listEl = document.getElementById("anonymai-panel-stats-list");
+      if (listEl) {
+        listEl.innerHTML = "";
+        
+        if (total === 0) {
+          listEl.innerHTML = `<div style="color: #94a3b8; font-style: italic; font-size: 9px; line-height: 1.4;" class="anonymai-ui">Aucune donnée protégée.</div>`;
+        } else {
+          const sortedStats = Object.entries(stats)
+            .filter(([_, count]) => count > 0)
+            .sort((a, b) => b[1] - a[1]);
+            
+          sortedStats.forEach(([cat, count]) => {
+            const color = categoryColors[cat] || defaultColor;
+            const label = categoryLabels[cat] || cat;
+            
+            const item = document.createElement("div");
+            item.className = "anonymai-panel-stat-item anonymai-ui";
+            item.style.display = "flex";
+            item.style.alignItems = "center";
+            item.style.justifyContent = "space-between";
+            item.style.gap = "6px";
+            item.style.width = "100%";
+            item.style.padding = "2px 0";
+            
+            const left = document.createElement("div");
+            left.className = "anonymai-ui";
+            left.style.display = "flex";
+            left.style.alignItems = "center";
+            left.style.gap = "4px";
+            
+            const dot = document.createElement("span");
+            dot.className = "anonymai-ui";
+            dot.style.width = "6px";
+            dot.style.height = "6px";
+            dot.style.borderRadius = "50%";
+            dot.style.backgroundColor = color;
+            dot.style.display = "inline-block";
+            
+            const text = document.createElement("span");
+            text.className = "anonymai-ui";
+            text.style.color = "#cbd5e1";
+            text.textContent = label;
+            
+            left.appendChild(dot);
+            left.appendChild(text);
+            
+            const val = document.createElement("span");
+            val.className = "anonymai-ui";
+            val.style.color = "#94a3b8";
+            val.style.fontWeight = "600";
+            val.textContent = count;
+            
+            item.appendChild(left);
+            item.appendChild(val);
+            listEl.appendChild(item);
+          });
+        }
+      }
+    });
+  }
+
   function updateMappingsList() {
     const listEl = document.getElementById("anonymai-mappings-list");
     if (!listEl) return;
@@ -967,14 +1748,29 @@
       div.className = "anonymai-ui";
       div.style.display = "flex";
       div.style.justifyContent = "space-between";
+      div.style.alignItems = "center";
       div.style.padding = "2px 0";
       div.style.borderBottom = "1px solid #334155";
       
       div.innerHTML = `
-        <span class="anonymai-ui" style="color: #34d399; font-weight:600;">${token}</span>
-        <span class="anonymai-ui" style="color: #f8fafc; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${original}">${original}</span>
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span class="anonymai-ui" style="color: #34d399; font-weight:600;">${token}</span>
+          <span class="anonymai-ui" style="color: #f8fafc; font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${original}">${original}</span>
+        </div>
+        <button class="anonymai-exclude-mapping-btn anonymai-ui" data-val="${original}" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; padding: 0 4px; font-weight: bold;" title="Exclure ce mot">✕</button>
       `;
       listEl.appendChild(div);
+    });
+
+    // Attacher les écouteurs sur les boutons d'exclusion rapide
+    const excludeBtns = listEl.querySelectorAll(".anonymai-exclude-mapping-btn");
+    excludeBtns.forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const val = btn.getAttribute("data-val");
+        if (val) {
+          excludeWord(val);
+        }
+      });
     });
   }
 
@@ -1039,11 +1835,15 @@
       const res = globalThis.PIIEngine.pseudonymizeText(extractedText, sessionState, {
         forcedElements: config.forcedElements,
         excludedElements: config.excludedElements,
-        pseudonymMode: config.pseudonymMode
+        pseudonymMode: config.pseudonymMode,
+        customPatterns: config.customPatterns,
+        customDictionaries: config.customDictionaries,
+        pseudonymProfile: config.pseudonymProfile
       });
 
       sessionState = res.sessionState;
       saveSessionToStorage();
+      updateStats(res.stats);
 
       fileObj.processedText = res.pseudonymizedText;
       fileObj.status = "success";
@@ -1298,20 +2098,42 @@
       // Spécifier la source du worker local
       pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdf.worker.mjs");
 
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = "";
+      let pdf;
+      try {
+        pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      } catch (err) {
+        if (err.name === 'PasswordException') {
+          const password = prompt("Ce fichier PDF est protégé par un mot de passe. Veuillez le saisir pour extraire le texte :");
+          if (password !== null) {
+            pdf = await pdfjsLib.getDocument({ data: arrayBuffer, password: password }).promise;
+          } else {
+            throw new Error("Extraction annulée car le document est protégé par mot de passe.");
+          }
+        } else {
+          throw err;
+        }
+      }
 
+      let fullText = "";
       for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        // Concaténer le texte de la page
-        const pageText = textContent.items.map(item => item.str).join(" ");
-        fullText += pageText + "\n";
+        try {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          // Concaténer le texte de la page de façon robuste
+          const pageText = textContent.items
+            .filter(item => item && typeof item.str === 'string')
+            .map(item => item.str)
+            .join(" ");
+          fullText += pageText + "\n";
+        } catch (pageErr) {
+          console.warn(`Erreur lors de l'extraction de la page ${i}:`, pageErr);
+          fullText += `[Erreur d'extraction sur la page ${i}]\n`;
+        }
       }
 
       return fullText;
     } catch (err) {
-      throw new Error("Impossible d'extraire le PDF. Vérifiez qu'il n'est pas scanné ou protégé. Détail : " + err.message);
+      throw new Error("Impossible d'extraire le PDF. Détail : " + err.message);
     }
   }
 
@@ -1333,14 +2155,21 @@
     });
   }
 
-  // Lecture fichier texte plat
-  function extractTextFromPlain(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = (err) => reject(new Error("Erreur FileReader : " + err));
-      reader.readAsText(file);
-    });
+  // Lecture fichier texte plat avec détection d'encodage robuste (UTF-8 puis Windows-1252)
+  async function extractTextFromPlain(file) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      try {
+        const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+        return utf8Decoder.decode(arrayBuffer);
+      } catch (e) {
+        console.warn("Échec du décodage UTF-8, tentative avec Windows-1252 :", e);
+        const winDecoder = new TextDecoder('windows-1252');
+        return winDecoder.decode(arrayBuffer);
+      }
+    } catch (err) {
+      throw new Error("Erreur de lecture du fichier texte : " + err.message);
+    }
   }
 
   // --- 8. SYSTÈME DE TOAST NOTIFICATION DANS LA PAGE ---

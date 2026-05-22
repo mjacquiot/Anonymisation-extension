@@ -5,11 +5,12 @@
   color: #15803d !important; /* Tailwind green-700 */
   font-weight: 600 !important;
   background-color: #f0fdf4 !important; /* Tailwind green-50 */
-  padding: 1px 4px !important;
+  padding: 0 2px !important;
   border-radius: 4px !important;
   border: 1px solid #bbf7d0 !important; /* Tailwind green-200 */
-  display: inline-block !important;
+  display: inline !important;
   font-family: inherit !important;
+  font-size: inherit !important;
   cursor: help !important;
   box-shadow: 0 1px 2px rgba(21, 128, 61, 0.05) !important;
   transition: all 0.2s ease !important;
@@ -511,4 +512,197 @@
   background-color: #10b981;
   box-shadow: 0 0 6px #10b981;
 }
+
+/* 6. Collapsible Sections in Assistant Panel */
+.anonymai-panel-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
+  user-select: none;
+}
+
+.anonymai-collapse-arrow {
+  font-size: 10px;
+  color: #94a3b8;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.anonymai-section-collapsed .anonymai-collapse-arrow {
+  transform: rotate(-90deg);
+}
+
+.anonymai-section-collapsed .anonymai-section-body {
+  display: none !important;
+}
+
+.anonymai-panel-section.anonymai-section-collapsed {
+  flex-grow: 0 !important;
+  gap: 0 !important;
+}
+
+.anonymai-shield-inline {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  flex-shrink: 0 !important;
+  align-self: center !important;
+  vertical-align: middle !important;
+  border-radius: 50% !important;
+  background-color: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  margin: 0 4px !important;
+  padding: 0 !important;
+  outline: none !important;
+  box-sizing: border-box !important;
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s ease !important;
+}
+
+.anonymai-shield-inline:hover {
+  background-color: rgba(16, 185, 129, 0.12) !important;
+  transform: scale(1.06) !important;
+}
+
+.anonymai-shield-inline:active {
+  transform: scale(0.95) !important;
+}
+
+.anonymai-shield-floating {
+  position: absolute !important;
+  bottom: 8px !important;
+  right: 48px !important;
+  z-index: 50 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 6px 12px !important;
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 20px !important;
+  font-family: 'Outfit', sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.25) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  outline: none !important;
+}
+
+.anonymai-shield-floating:hover {
+  transform: translateY(-1.5px) scale(1.02) !important;
+  box-shadow: 0 6px 14px rgba(16, 185, 129, 0.4) !important;
+}
+
+.anonymai-shield-floating:active {
+  transform: translateY(0) scale(0.98) !important;
+}
+
+.anonymai-shield-icon {
+  width: 18px;
+  height: 18px;
+  stroke: #94a3b8;
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.25s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.anonymai-shield-inline:hover .anonymai-shield-icon {
+  stroke: #10b981;
+  transform: scale(1.05) rotate(4deg);
+}
+
+.anonymai-shield-floating .anonymai-shield-icon {
+  stroke: #ffffff;
+  width: 14px;
+  height: 14px;
+}
+
+/* Styles pour le FAB et son icône */
+.anonymai-fab .anonymai-shield-icon {
+  width: 26px;
+  height: 26px;
+  stroke: #ffffff; /* Contraste parfait sur fond vert émeraude */
+  stroke-width: 2.2;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.anonymai-fab:hover .anonymai-shield-icon {
+  transform: scale(1.05) rotate(5deg);
+}
+
+.anonymai-fab .anonymai-close-icon {
+  width: 24px;
+  height: 24px;
+  stroke: #ffffff;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 8. Animations et effets pour le Camembert interactif, le Badge de Conversation et le Bouclier Inline */
+.anonymai-panel-pie-slice {
+  transition: stroke-width 0.25s cubic-bezier(0.4, 0, 0.2, 1), filter 0.25s ease !important;
+}
+
+.anonymai-panel-pie-slice:hover {
+  stroke-width: 15px !important;
+  filter: brightness(1.2) drop-shadow(0 0 3px rgba(16, 185, 129, 0.5)) !important;
+}
+
+/* Badge flottant "Sécurisé" sur les bulles de messages utilisateur */
+.anonymai-message-badge {
+  position: absolute !important;
+  top: 10px !important;
+  right: 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+  border-radius: 9999px !important;
+  padding: 3px 8px !important;
+  color: #10b981 !important;
+  font-family: 'Outfit', 'Inter', sans-serif !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  z-index: 10 !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.05) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.anonymai-message-badge-icon {
+  width: 9px !important;
+  height: 9px !important;
+  fill: none !important;
+  stroke: #10b981 !important;
+  stroke-width: 3 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+/* Bouclier SVG inline dans le texte restauré en vert */
+.anonymai-inline-restore-shield {
+  display: inline-block !important;
+  vertical-align: middle !important;
+  margin-right: 3px !important;
+  transition: transform 0.2s ease !important;
+}
+
+.anonym-restored:hover .anonymai-inline-restore-shield {
+  transform: scale(1.15) rotate(5deg) !important;
+}
+
+
 

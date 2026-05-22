@@ -1,6 +1,7 @@
 // Script de contrôle du Popup (popup.js)
 
 document.addEventListener("DOMContentLoaded", () => {
+  const storage = chrome.storage.sync || chrome.storage.local;
   const globalToggle = document.getElementById("global-toggle");
   const statusBadge = document.getElementById("status-badge");
   const statusText = document.getElementById("status-text");
@@ -30,7 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 2. Charger les paramètres depuis le stockage local
   function loadSettings() {
-    chrome.storage.local.get({
+    storage.get({
       enabled: true,
       globalContext: "",
       pseudonymMode: "aliases",
@@ -134,7 +135,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 5. Gérer les événements de bascule d'activation globale
   globalToggle.addEventListener("change", () => {
     const isEnabled = globalToggle.checked;
-    chrome.storage.local.set({ enabled: isEnabled }, () => {
+    storage.set({ enabled: isEnabled }, () => {
       updateStatusUI(isEnabled);
       // Envoyer un message à l'onglet actif pour recharger l'état sans recharger la page
       if (currentTabId) {
@@ -150,7 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll('input[name="pseudonym-mode"]').forEach(radio => {
     radio.addEventListener("change", (e) => {
       const mode = e.target.value;
-      chrome.storage.local.set({ pseudonymMode: mode }, () => {
+      storage.set({ pseudonymMode: mode }, () => {
         // Optionnel: Recharger les mappings de session affichés si le mode change
         if (currentTabId) {
           loadSessionMappings();
@@ -166,7 +167,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Gérer le changement d'overlay
   overlayToggle.addEventListener("change", () => {
     const show = overlayToggle.checked;
-    chrome.storage.local.set({ showOverlay: show }, () => {
+    storage.set({ showOverlay: show }, () => {
       if (currentTabId) {
         chrome.tabs.sendMessage(currentTabId, { action: "toggle_active", enabled: globalToggle.checked }, () => {
           const err = chrome.runtime.lastError;
@@ -178,7 +179,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 6. Sauvegarder le contexte système
   saveContextBtn.addEventListener("click", () => {
     const contextText = quickContext.value;
-    chrome.storage.local.set({ globalContext: contextText }, () => {
+    storage.set({ globalContext: contextText }, () => {
       const originalText = saveContextBtn.textContent;
       saveContextBtn.textContent = "Sauvegardé !";
       saveContextBtn.style.backgroundColor = "#059669"; // Couleur verte plus foncée temporaire

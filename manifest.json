@@ -5,7 +5,8 @@
   "description": "Pseudonymise localement vos prompts et documents avant envoi aux IA, et restaure les correspondances de session en vert.",
   "permissions": [
     "storage",
-    "contextMenus"
+    "contextMenus",
+    "downloads"
   ],
   "host_permissions": [
     "https://gemini.google.com/*",
