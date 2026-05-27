@@ -23,11 +23,90 @@
   let shieldBtnEl = null;
   let isPanelOpen = false;
   let observer = null;
+  let justSelected = false;
 
   // Fonction utilitaire pour normaliser les accents/diacritiques
   function removeDiacritics(str) {
     if (!str) return "";
     return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function escapeHTML(str) {
+    if (!str) return "";
+    return str.replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#039;");
+  }
+
+  function isWordForced(word) {
+    if (!config.forcedElements || !word) return false;
+    return config.forcedElements.some(el => {
+      const val = typeof el === "object" ? el.value : el;
+      return val.toLowerCase() === word.toLowerCase();
+    });
+  }
+
+  function generateHighlightedHTML(text, candidates) {
+    if (!candidates || candidates.length === 0) {
+      return escapeHTML(text).replace(/\n/g, "<br>");
+    }
+    
+    const sorted = [...candidates].sort((a, b) => a.start - b.start);
+    
+    let html = "";
+    let lastIndex = 0;
+    
+    for (const c of sorted) {
+      if (c.start < lastIndex) continue;
+      
+      html += escapeHTML(text.substring(lastIndex, c.start));
+      
+      const candText = text.substring(c.start, c.end);
+      const forced = isWordForced(candText);
+      const highlightClass = forced ? "anonymai-input-pii-forced" : "anonymai-input-pii-highlight";
+      html += `<span class="${highlightClass}">${escapeHTML(candText)}</span>`;
+      
+      lastIndex = c.end;
+    }
+    
+    html += escapeHTML(text.substring(lastIndex));
+    return html.replace(/\n/g, "<br>");
+  }
+
+  function generatePseudonymizedHighlightedHTML(text, sessionState) {
+    if (!text) return "";
+    
+    const generatedAliases = (sessionState && sessionState.generatedAliases) || [];
+    let escaped = escapeHTML(text);
+    
+    // 1. Remplacer les jetons standard du style [NOM_1]
+    const tokenRegex = /\[[A-Z_]+_\d+\]/g;
+    escaped = escaped.replace(tokenRegex, (match) => {
+      const orig = (sessionState && sessionState.mappings && sessionState.mappings[match]) || "";
+      const forced = isWordForced(orig);
+      const highlightClass = forced ? "anonymai-input-pii-forced" : "anonymai-input-pii-highlight";
+      return `<span class="${highlightClass}">${match}</span>`;
+    });
+    
+    // 2. Remplacer les alias générés
+    if (generatedAliases.length > 0) {
+      const sortedAliases = [...generatedAliases].sort((a, b) => b.length - a.length);
+      for (const alias of sortedAliases) {
+        if (!alias) continue;
+        const escapedAlias = escapeHTML(alias);
+        const escapedAliasRegex = new RegExp(`\\b${escapedAlias}\\b`, 'gi');
+        escaped = escaped.replace(escapedAliasRegex, (match) => {
+          const orig = (sessionState && sessionState.mappings && sessionState.mappings[alias]) || "";
+          const forced = isWordForced(orig);
+          const highlightClass = forced ? "anonymai-input-pii-forced" : "anonymai-input-pii-highlight";
+          return `<span class="${highlightClass}">${match}</span>`;
+        });
+      }
+    }
+    
+    return escaped.replace(/\n/g, "<br>");
   }
 
   // --- 1. INITIALISATION ET RÉCUPÉRATION DU TAB ID ---
@@ -387,12 +466,14 @@
     // Le bouton existe déjà
     if (document.getElementById("anonymai-shield-btn") || document.getElementById("anonymai-shield-btn-inline")) return;
 
+    const isPseudonymized = inputEl.getAttribute("data-anonymai-state") === "pseudonymized";
+
     // Tenter de trouver la barre d'outils native de l'IA
     const toolbar = findAIToolbar();
     if (toolbar) {
       shieldBtnEl = document.createElement("button");
       shieldBtnEl.id = "anonymai-shield-btn-inline";
-      shieldBtnEl.className = "anonymai-ui anonymity-ui anonymai-shield-inline";
+      shieldBtnEl.className = "anonymai-ui anonymity-ui anonymai-shield-inline" + (isPseudonymized ? " anonymai-shield-active" : "");
       shieldBtnEl.innerHTML = `<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`;
       shieldBtnEl.title = "Pseudonymiser le texte et injecter le contexte (Raccourci : Ctrl+Alt+A)";
 
@@ -428,7 +509,7 @@
     // Créer le bouton shield flottant
     shieldBtnEl = document.createElement("button");
     shieldBtnEl.id = "anonymai-shield-btn";
-    shieldBtnEl.className = "anonymai-ui anonymity-ui anonymai-shield-floating";
+    shieldBtnEl.className = "anonymai-ui anonymity-ui anonymai-shield-floating" + (isPseudonymized ? " anonymai-shield-active" : "");
     shieldBtnEl.innerHTML = `<svg viewBox="0 0 24 24" class="anonymai-shield-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg> <span>Pseudonymiser</span>`;
     shieldBtnEl.title = "Pseudonymiser le texte et injecter le contexte (Raccourci : Ctrl+Alt+A)";
 
@@ -456,7 +537,7 @@
   }
 
   // Écrit de façon sécurisée le texte dans la zone de saisie contrôlée par React
-  function insertTextIntoAI(text) {
+  function insertTextIntoAI(text, html = null) {
     const inputEl = findAIInput();
     if (!inputEl) {
       showToast("Impossible de localiser la zone d'écriture de l'IA.", "error");
@@ -465,16 +546,30 @@
 
     inputEl.focus();
 
+    // Marquer temporairement comme modification programmatique
+    inputEl.setAttribute("data-anonymai-processed", "true");
+
     // Méthode standard pour insérer le texte à l'emplacement du curseur (ou remplace tout si sélectionné)
     document.execCommand('selectAll', false, null);
-    const success = document.execCommand('insertText', false, text);
+    
+    let success = false;
+    const isEditableDiv = !(inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT');
+    if (html && isEditableDiv) {
+      success = document.execCommand('insertHTML', false, html);
+    } else {
+      success = document.execCommand('insertText', false, text);
+    }
 
     if (!success) {
       // Fallback si execCommand échoue (selon les navigateurs)
       if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
         inputEl.value = text;
       } else {
-        inputEl.innerText = text;
+        if (html) {
+          inputEl.innerHTML = html;
+        } else {
+          inputEl.innerText = text;
+        }
       }
       
       // Lever les événements natifs de saisie pour React/Svelte
@@ -485,8 +580,10 @@
       inputEl.dispatchEvent(changeEvent);
     }
     
-    // Marquer la zone de saisie comme ayant été anonymisée par l'extension
-    inputEl.setAttribute("data-anonymai-processed", "true");
+    // Nettoyer après la fin des événements synchrones
+    setTimeout(() => {
+      inputEl.removeAttribute("data-anonymai-processed");
+    }, 50);
     
     return true;
   }
@@ -497,7 +594,20 @@
   function handleInputModify(e) {
     const inputEl = findAIInput();
     if (inputEl && e.target === inputEl) {
+      if (inputEl.getAttribute("data-anonymai-processed") === "true") {
+        return;
+      }
       inputEl.removeAttribute("data-anonymai-processed");
+      inputEl.removeAttribute("data-anonymai-state");
+      inputEl.removeAttribute("data-anonymai-original");
+
+      // Masquer la carte de prévisualisation lors de l'édition manuelle
+      hideInputPreviewCard();
+
+      const inlineBtn = document.getElementById("anonymai-shield-btn-inline");
+      if (inlineBtn) inlineBtn.classList.remove("anonymai-shield-active");
+      const floatBtn = document.getElementById("anonymai-shield-btn");
+      if (floatBtn) floatBtn.classList.remove("anonymai-shield-active");
       
       if (inputDebounceTimeout) clearTimeout(inputDebounceTimeout);
       inputDebounceTimeout = setTimeout(() => {
@@ -608,10 +718,48 @@
       return;
     }
 
+    const state = inputEl.getAttribute("data-anonymai-state");
+
+    if (state === "pseudonymized") {
+      // --- LOGIQUE DE REVERSION / RETOUR EN ARRIÈRE ---
+      const originalText = inputEl.getAttribute("data-anonymai-original") || "";
+      if (originalText) {
+        const promptRes = globalThis.PIIEngine.pseudonymizeText(originalText, sessionState, {
+          forcedElements: config.forcedElements,
+          excludedElements: config.excludedElements,
+          pseudonymMode: config.pseudonymMode,
+          customPatterns: config.customPatterns,
+          customDictionaries: config.customDictionaries,
+          pseudonymProfile: config.pseudonymProfile
+        });
+        
+        const html = generateHighlightedHTML(originalText, promptRes.candidates);
+        
+        insertTextIntoAI(originalText, html);
+        inputEl.setAttribute("data-anonymai-state", "original");
+        inputEl.removeAttribute("data-anonymai-processed");
+        
+        // Afficher l'aperçu original surligné
+        showInputPreviewCard(inputEl, html, false);
+
+        const inlineBtn = document.getElementById("anonymai-shield-btn-inline");
+        if (inlineBtn) inlineBtn.classList.remove("anonymai-shield-active");
+        const floatBtn = document.getElementById("anonymai-shield-btn");
+        if (floatBtn) floatBtn.classList.remove("anonymai-shield-active");
+        
+        showToast("Restauration du texte original (mode édition).", "info");
+      }
+      return;
+    }
+
+    // --- LOGIQUE DE PSEUDONYMISATION ---
     // 1. Retirer tout préfixe de contexte système existant pour repartir sur la saisie brute
     let actualPrompt = rawText;
     const contextPrefixRegex = /^\[Contexte Système\s*:[^\]]*\](?:\s*\n)*/i;
     actualPrompt = actualPrompt.replace(contextPrefixRegex, "");
+
+    // Sauvegarder le texte brut avant d'effectuer la pseudonymisation
+    inputEl.setAttribute("data-anonymai-original", actualPrompt);
 
     // 2. Pseudonymiser la saisie utilisateur brute
     const promptRes = globalThis.PIIEngine.pseudonymizeText(actualPrompt, sessionState, {
@@ -653,8 +801,22 @@
       finalProcessedText = `[Contexte Système : ${processedContext}]\n\n${processedPrompt}`;
     }
 
+    const html = generatePseudonymizedHighlightedHTML(finalProcessedText, sessionState);
+
     // Ré-injecter dans l'UI
-    insertTextIntoAI(finalProcessedText);
+    insertTextIntoAI(finalProcessedText, html);
+    
+    inputEl.setAttribute("data-anonymai-state", "pseudonymized");
+
+    // Afficher l'aperçu pseudonymisé surligné
+    showInputPreviewCard(inputEl, html, true);
+
+    const inlineBtn = document.getElementById("anonymai-shield-btn-inline");
+    if (inlineBtn) inlineBtn.classList.add("anonymai-shield-active");
+    const floatBtn = document.getElementById("anonymai-shield-btn");
+    if (floatBtn) floatBtn.classList.add("anonymai-shield-active");
+
+    showToast("Texte pseudonymisé avec succès.", "success");
   }
 
   // Raccourci clavier Ctrl+Alt+A
@@ -676,6 +838,7 @@
         if (inputEl.getAttribute("data-anonymai-processed") === "true") {
           // Déjà traité par l'extension, laisser passer et retirer la marque pour le prochain envoi
           inputEl.removeAttribute("data-anonymai-processed");
+          hideInputPreviewCard();
           return;
         }
 
@@ -737,6 +900,7 @@
         if (inputEl.getAttribute("data-anonymai-processed") === "true") {
           // Déjà traité par l'extension, laisser passer et retirer la marque pour le prochain envoi
           inputEl.removeAttribute("data-anonymai-processed");
+          hideInputPreviewCard();
           return;
         }
 
@@ -933,18 +1097,7 @@
     span.className = "anonym-restored anonymai-ui";
     span.setAttribute("data-token", aliasOrToken);
     span.title = `Valeur originale : ${origValue} (Alias: ${aliasOrToken})`;
-    
-    // Inject dynamic inline SVG shield and wrap text for safety
-    span.innerHTML = `
-      <svg viewBox="0 0 24 24" class="anonymai-inline-restore-shield" style="width: 11px; height: 11px; fill: none; stroke: #10b981; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; display: inline-block;">
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-      </svg>
-    `;
-    const textSpan = document.createElement("span");
-    textSpan.className = "anonymai-ui";
-    textSpan.style.display = "inline";
-    textSpan.textContent = origValue;
-    span.appendChild(textSpan);
+    span.textContent = origValue;
 
     // Style vert haut de gamme identique pour les deux modes
     Object.assign(span.style, {
@@ -954,13 +1107,10 @@
       padding: '2px 6px',
       borderRadius: '4px',
       border: '1px solid #a7f3d0',
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '4px',
+      display: 'inline',
       fontFamily: 'inherit',
       fontSize: 'inherit',
       cursor: 'help',
-      verticalAlign: 'middle',
       textDecoration: 'none'
     });
 
@@ -974,60 +1124,7 @@
       // Récurser sur la partie après
       restoreTextNode(afterNode);
 
-      // Ajouter le badge Sécurisé sur le message parent
-      addShieldBadgeToMessage(span);
     }
-  }
-
-  function addShieldBadgeToMessage(span) {
-    const messageSelectors = [
-      '[data-message-author-role="user"]',
-      '[data-testid="user-message"]',
-      '.query-text',
-      'user-query',
-      '.user-query',
-      '.message.user',
-      '.message-bubble.user',
-      'article',
-      '.message'
-    ];
-
-    let messageBubble = null;
-    for (const selector of messageSelectors) {
-      messageBubble = span.closest(selector);
-      if (messageBubble) break;
-    }
-
-    if (!messageBubble) {
-      let curr = span.parentNode;
-      for (let i = 0; i < 5 && curr; i++) {
-        if (curr.tagName === 'DIV' && (curr.className.includes('message') || curr.className.includes('bubble') || curr.className.includes('text'))) {
-          messageBubble = curr;
-          break;
-        }
-        curr = curr.parentNode;
-      }
-    }
-
-    if (!messageBubble) return;
-
-    if (messageBubble.querySelector('.anonymai-message-badge')) return;
-
-    const style = window.getComputedStyle(messageBubble);
-    if (style.position === 'static') {
-      messageBubble.style.position = 'relative';
-    }
-
-    const badge = document.createElement('div');
-    badge.className = 'anonymai-message-badge anonymai-ui';
-    badge.innerHTML = `
-      <svg viewBox="0 0 24 24" class="anonymai-message-badge-icon" style="width: 10px; height: 10px; fill: none; stroke: #10b981; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;">
-        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-      </svg>
-      <span>Sécurisé</span>
-    `;
-
-    messageBubble.appendChild(badge);
   }
 
   function removeRestoredSpans() {
@@ -1154,6 +1251,15 @@
               <input type="file" id="anonymai-file-input" accept=".txt,.csv,.md,.pdf,.docx" multiple style="display:none;">
               <input type="file" id="anonymai-folder-input" webkitdirectory directory style="display:none;">
             </div>
+            <div id="anonymai-global-progress-container" class="anonymai-ui" style="display: none; width: 100%; margin-top: 10px; padding: 8px 12px; background-color: #0f172a; border-radius: 6px; border: 1px solid #334155; box-sizing: border-box;">
+              <div style="display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-bottom: 4px;">
+                <span>Traitement des documents...</span>
+                <span id="anonymai-global-progress-text">0 / 0</span>
+              </div>
+              <div style="width: 100%; height: 6px; background-color: #334155; border-radius: 3px; overflow: hidden;">
+                <div id="anonymai-global-progress-bar" style="width: 0%; height: 100%; background-color: #10b981; transition: width 0.3s ease;"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1207,6 +1313,11 @@
                   <option value="ORGANISATION">Collectivité / Entreprise</option>
                   <option value="TELEPHONE">Téléphone</option>
                   <option value="EMAIL">Email</option>
+                  <option value="ADRESSE">Adresse physique</option>
+                  <option value="PLAQUE_IMMATRICULATION">Plaque d'immatriculation</option>
+                  <option value="IDENTIFIANT_FISCAL">Identifiant fiscal</option>
+                  <option value="MOT_DE_PASSE">Mot de passe</option>
+                  <option value="CLE_API">Clé d'API</option>
                 </select>
                 <button class="anonymai-btn anonymai-ui" id="anonymai-manual-force-btn" style="padding: 4px 8px; font-size: 11px; background-color: #10b981; border: none; color: #0b0f19; font-weight:600; cursor: pointer; border-radius: 4px;">Forcer</button>
                 <button class="anonymai-btn anonymai-ui" id="anonymai-manual-exclude-btn" style="padding: 4px 8px; font-size: 11px; background-color: #ef4444; color: white; border: none; font-weight:600; cursor: pointer; border-radius: 4px;">Exclure</button>
@@ -1399,14 +1510,64 @@
     });
 
     injectBtn.addEventListener("click", () => {
-      const text = resultTextarea.value;
-      if (!text || text === "--- Aucun document sélectionné ---") {
-        showToast("Aucun texte à injecter.", "info");
+      if (uploadedFiles.length === 0) {
+        showToast("Aucun document chargé.", "info");
         return;
       }
-      const success = insertTextIntoAI(text);
+      
+      let rawText = "";
+      if (activeFileId === 'combined') {
+        const selectedFiles = uploadedFiles.filter(f => f.selected && f.status === 'success');
+        if (selectedFiles.length === 0) {
+          showToast("Aucun document sélectionné.", "info");
+          return;
+        }
+        rawText = selectedFiles.map(f => {
+          return `--- Début de document : ${f.name} ---\n${f.rawText}\n--- Fin de document : ${f.name} ---`;
+        }).join("\n\n");
+      } else {
+        const file = uploadedFiles.find(f => f.id === activeFileId);
+        if (!file || file.status !== 'success') {
+          showToast("Aucun document valide sélectionné.", "info");
+          return;
+        }
+        rawText = file.rawText;
+      }
+
+      if (!rawText || rawText.trim().length === 0) {
+        showToast("Le document sélectionné est vide.", "info");
+        return;
+      }
+
+      const res = globalThis.PIIEngine.pseudonymizeText(rawText, sessionState, {
+        forcedElements: config.forcedElements,
+        excludedElements: config.excludedElements,
+        pseudonymMode: config.pseudonymMode,
+        customPatterns: config.customPatterns,
+        customDictionaries: config.customDictionaries,
+        pseudonymProfile: config.pseudonymProfile
+      });
+
+      const html = generateHighlightedHTML(rawText, res.candidates);
+
+      const inputEl = findAIInput();
+      if (inputEl) {
+        inputEl.setAttribute("data-anonymai-original", rawText);
+        inputEl.setAttribute("data-anonymai-state", "original");
+        inputEl.removeAttribute("data-anonymai-processed");
+
+        // Afficher l'aperçu original surligné
+        showInputPreviewCard(inputEl, html, false);
+
+        const inlineBtn = document.getElementById("anonymai-shield-btn-inline");
+        if (inlineBtn) inlineBtn.classList.remove("anonymai-shield-active");
+        const floatBtn = document.getElementById("anonymai-shield-btn");
+        if (floatBtn) floatBtn.classList.remove("anonymai-shield-active");
+      }
+
+      const success = insertTextIntoAI(rawText, html);
       if (success) {
-        showToast("Texte injecté dans l'IA !", "success");
+        showToast("Texte injecté dans l'IA (original) !", "success");
         isPanelOpen = false;
         panelEl.classList.remove("anonymai-panel-open");
         fabEl.classList.remove("anonymai-fab-active");
@@ -1586,7 +1747,12 @@
         "IBAN": "IBANs",
         "CARTE_BANCAIRE": "Cartes Bancaires",
         "CODE_POSTAL": "Codes Postaux",
-        "FORCE": "Termes forcés"
+        "FORCE": "Termes forcés",
+        "ADRESSE": "Adresses",
+        "PLAQUE_IMMATRICULATION": "Plaques Immat.",
+        "IDENTIFIANT_FISCAL": "No Fiscaux",
+        "MOT_DE_PASSE": "Mdp",
+        "CLE_API": "Clés d'API"
       };
       
       const categoryColors = {
@@ -1601,7 +1767,12 @@
         "IBAN": "#f59e0b",          // Amber
         "CARTE_BANCAIRE": "#f97316",// Orange
         "CODE_POSTAL": "#0ea5e9",   // Sky
-        "FORCE": "#64748b"          // Slate
+        "FORCE": "#64748b",         // Slate
+        "ADRESSE": "#fb7185",       // Rose-light
+        "PLAQUE_IMMATRICULATION": "#fb923c", // Orange-light
+        "IDENTIFIANT_FISCAL": "#a7f3d0", // Mint
+        "MOT_DE_PASSE": "#ec4899",   // Pink
+        "CLE_API": "#e11d48"        // Red
       };
       
       const defaultColor = "#cbd5e1";
@@ -1781,6 +1952,17 @@
     const hadFiles = uploadedFiles.length > 0;
     const addedFiles = [];
 
+    const progressContainer = document.getElementById("anonymai-global-progress-container");
+    const progressText = document.getElementById("anonymai-global-progress-text");
+    const progressBar = document.getElementById("anonymai-global-progress-bar");
+    
+    if (progressContainer) {
+      progressContainer.style.display = "block";
+      progressText.textContent = `0 / ${files.length}`;
+      progressBar.style.width = "0%";
+    }
+
+    let processedCount = 0;
     for (const file of files) {
       const fileId = "file_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9);
       const newFileObj = {
@@ -1798,6 +1980,12 @@
       
       // Attendre la fin du traitement pour éviter les conflits d'état sessionState concurrents
       await processSingleFile(file, newFileObj);
+
+      processedCount++;
+      if (progressContainer) {
+        progressText.textContent = `${processedCount} / ${files.length}`;
+        progressBar.style.width = `${(processedCount / files.length) * 100}%`;
+      }
     }
 
     if (hadFiles || files.length > 1) {
@@ -1807,6 +1995,12 @@
     }
 
     renderFilesList();
+
+    if (progressContainer) {
+      setTimeout(() => {
+        progressContainer.style.display = "none";
+      }, 1000);
+    }
   }
 
   async function processSingleFile(file, fileObj) {
@@ -2170,6 +2364,498 @@
     } catch (err) {
       throw new Error("Erreur de lecture du fichier texte : " + err.message);
     }
+  }
+
+  // --- 7.4 INTERACTIVITÉ DE LA PRÉVISUALISATION ---
+  function resolveTextWithMappings(text, sessionState) {
+    if (!text || !sessionState || !sessionState.mappings) return text;
+    let resolved = text.trim();
+    
+    // 1. Remplacer les jetons standard du style [NOM_1] par leur valeur d'origine
+    const tokenRegex = /\[[A-Z_]+_\d+\]/g;
+    resolved = resolved.replace(tokenRegex, (match) => {
+      const mapped = sessionState.mappings[match];
+      return mapped || match;
+    });
+    
+    // 2. Remplacer les alias générés
+    const generatedAliases = sessionState.generatedAliases || [];
+    if (generatedAliases.length > 0) {
+      const sortedAliases = [...generatedAliases].sort((a, b) => b.length - a.length);
+      for (const alias of sortedAliases) {
+        if (!alias) continue;
+        const escapedAlias = alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedAlias}\\b`, 'gi');
+        resolved = resolved.replace(regex, (match) => {
+          const mapped = sessionState.mappings[alias];
+          return mapped || match;
+        });
+      }
+    }
+    
+    // 3. Nettoyer les contractions françaises (ex: d'Estienne -> Estienne)
+    const contractionMatch = resolved.match(/^(?:[dlcjmtsn]|qu)'(.+)$/i);
+    if (contractionMatch) {
+      resolved = contractionMatch[1];
+    }
+    
+    return resolved;
+  }
+
+  function getWordAtPointFromEvent(e) {
+    const x = e.clientX;
+    const y = e.clientY;
+    
+    if (e.target && (e.target.classList.contains("anonymai-input-pii-highlight") || e.target.classList.contains("anonymai-input-pii-forced"))) {
+      let word = e.target.textContent.trim();
+      const contractionMatch = word.match(/^(?:[dlcjmtsn]|qu)'(.+)$/i);
+      if (contractionMatch) {
+        word = contractionMatch[1];
+      }
+      return {
+        word: word,
+        node: e.target
+      };
+    }
+    
+    let range;
+    if (document.caretRangeFromPoint) {
+      range = document.caretRangeFromPoint(x, y);
+    } else if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(x, y);
+      if (position) {
+        range = document.createRange();
+        range.setStart(position.offsetNode, position.offset);
+        range.setEnd(position.offsetNode, position.offset);
+      }
+    }
+    
+    if (!range) return null;
+    
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return null;
+    
+    const text = node.nodeValue;
+    const offset = range.startOffset;
+    
+    const wordRegex = /[\p{L}\p{N}'-]/u;
+    
+    let start = offset;
+    while (start > 0 && wordRegex.test(text.charAt(start - 1))) {
+      start--;
+    }
+    
+    let end = offset;
+    while (end < text.length && wordRegex.test(text.charAt(end))) {
+      end++;
+    }
+    
+    let clickedWord = text.substring(start, end).trim();
+    if (!clickedWord || clickedWord.length <= 1) return null;
+    
+    // Nettoyer les contractions françaises
+    const contractionMatch = clickedWord.match(/^(?:[dlcjmtsn]|qu)'(.+)$/i);
+    if (contractionMatch) {
+      clickedWord = contractionMatch[1];
+    }
+    
+    if (!clickedWord || clickedWord.length <= 1) return null;
+    
+    return {
+      word: clickedWord,
+      node: node
+    };
+  }
+
+  function refreshPreviewAndInput() {
+    const inputEl = findAIInput();
+    if (!inputEl) return;
+    
+    const originalText = inputEl.getAttribute("data-anonymai-original") || "";
+    const state = inputEl.getAttribute("data-anonymai-state") || "original";
+    
+    if (!originalText) return;
+    
+    const promptRes = globalThis.PIIEngine.pseudonymizeText(originalText, sessionState, {
+      forcedElements: config.forcedElements,
+      excludedElements: config.excludedElements,
+      pseudonymMode: config.pseudonymMode,
+      customPatterns: config.customPatterns,
+      customDictionaries: config.customDictionaries,
+      pseudonymProfile: config.pseudonymProfile
+    });
+    
+    sessionState = promptRes.sessionState;
+    saveSessionToStorage();
+    
+    if (state === "pseudonymized") {
+      let processedPrompt = promptRes.pseudonymizedText;
+      let processedContext = "";
+      if (config.globalContext && config.globalContext.trim().length > 0) {
+        const trimmedContext = config.globalContext.trim();
+        const contextRes = globalThis.PIIEngine.pseudonymizeText(trimmedContext, sessionState, {
+          forcedElements: config.forcedElements,
+          excludedElements: config.excludedElements,
+          pseudonymMode: config.pseudonymMode,
+          customPatterns: config.customPatterns,
+          customDictionaries: config.customDictionaries,
+          pseudonymProfile: config.pseudonymProfile
+        });
+        processedContext = contextRes.pseudonymizedText.trim();
+        sessionState = contextRes.sessionState;
+      }
+      
+      let finalProcessedText = processedPrompt;
+      if (processedContext.length > 0) {
+        finalProcessedText = `[Contexte Système : ${processedContext}]\n\n${processedPrompt}`;
+      }
+      
+      const html = generatePseudonymizedHighlightedHTML(finalProcessedText, sessionState);
+      insertTextIntoAI(finalProcessedText, html);
+      inputEl.setAttribute("data-anonymai-state", "pseudonymized");
+      showInputPreviewCard(inputEl, html, true);
+    } else {
+      const html = generateHighlightedHTML(originalText, promptRes.candidates);
+      insertTextIntoAI(originalText, html);
+      inputEl.setAttribute("data-anonymai-state", "original");
+      showInputPreviewCard(inputEl, html, false);
+    }
+  }
+
+  function showPreviewTooltip(x, y, text) {
+    let tooltip = document.getElementById("anonymai-preview-tooltip");
+    if (!tooltip) {
+      tooltip = document.createElement("div");
+      tooltip.id = "anonymai-preview-tooltip";
+      tooltip.className = "anonymai-ui";
+      Object.assign(tooltip.style, {
+        position: "fixed",
+        backgroundColor: "#0b0f19",
+        color: "#cbd5e1",
+        padding: "8px 12px",
+        borderRadius: "6px",
+        fontSize: "11px",
+        fontWeight: "600",
+        fontFamily: "'Outfit', sans-serif",
+        border: "1px solid #10b981",
+        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5)",
+        pointerEvents: "none",
+        zIndex: "1000000",
+        display: "none",
+        whiteSpace: "nowrap",
+        lineHeight: "1.4"
+      });
+      document.body.appendChild(tooltip);
+    }
+    tooltip.innerHTML = text;
+    tooltip.style.left = (x + 12) + "px";
+    tooltip.style.top = (y + 15) + "px";
+    tooltip.style.display = "block";
+  }
+
+  function hidePreviewTooltip() {
+    const tooltip = document.getElementById("anonymai-preview-tooltip");
+    if (tooltip) tooltip.style.display = "none";
+  }
+
+  // --- 7.5 CARTE DE PRÉVISUALISATION FLOTTANTE ---
+  function showInputPreviewCard(inputEl, htmlContent, isPseudonymized) {
+    let card = document.getElementById("anonymai-input-preview");
+    
+    // Sauvegarder la position de défilement
+    let savedScrollTop = 0;
+    let savedBodyScrollTop = 0;
+    if (card) {
+      savedScrollTop = card.scrollTop;
+      const oldBody = card.querySelector(".anonymai-input-preview-body");
+      if (oldBody) {
+        savedBodyScrollTop = oldBody.scrollTop;
+      }
+    }
+
+    const targetParent = getNonClippingParent(inputEl) || inputEl.parentNode;
+    if (card && targetParent && card.parentNode !== targetParent) {
+      targetParent.appendChild(card);
+    }
+
+    const titleText = isPseudonymized 
+      ? "Aperçu : Texte Pseudonymisé (vert = jetons masqués)" 
+      : "Aperçu : Texte Original (vert = termes sensibles détectés)";
+
+    let isNew = false;
+    if (!card) {
+      isNew = true;
+      card = document.createElement("div");
+      card.id = "anonymai-input-preview";
+      card.className = "anonymai-ui anonymity-ui anonymai-input-preview-card";
+      
+      if (targetParent) {
+        const parentStyle = window.getComputedStyle(targetParent);
+        if (parentStyle.position === "static") {
+          targetParent.style.position = "relative";
+        }
+        targetParent.appendChild(card);
+      } else {
+        document.body.appendChild(card);
+      }
+      
+      // Structure initiale
+      card.innerHTML = `
+        <div class="anonymai-input-preview-header anonymai-ui">
+          <span class="anonymai-input-preview-title anonymai-ui">${titleText}</span>
+          <button class="anonymai-input-preview-close anonymai-ui" id="anonymai-preview-close-btn">&times;</button>
+        </div>
+        <div class="anonymai-input-preview-body anonymai-ui">${htmlContent}</div>
+      `;
+    } else {
+      // Mettre à jour seulement si existant
+      const titleEl = card.querySelector(".anonymai-input-preview-title");
+      if (titleEl) titleEl.textContent = titleText;
+      
+      const bodyEl = card.querySelector(".anonymai-input-preview-body");
+      if (bodyEl) {
+        bodyEl.innerHTML = htmlContent;
+      }
+    }
+
+    const bodyEl = card.querySelector(".anonymai-input-preview-body");
+
+    // Restaurer la position de défilement avec plusieurs méthodes pour contrer le layout asynchrone
+    const restoreScroll = () => {
+      card.scrollTop = savedScrollTop;
+      if (bodyEl) {
+        bodyEl.scrollTop = savedBodyScrollTop;
+      }
+    };
+
+    // Restauration immédiate (force la mise en page)
+    restoreScroll();
+    
+    // Restauration différée pour s'assurer que le navigateur a calculé le layout
+    requestAnimationFrame(() => {
+      restoreScroll();
+      requestAnimationFrame(() => {
+        restoreScroll();
+      });
+    });
+    setTimeout(restoreScroll, 0);
+    setTimeout(restoreScroll, 20);
+    setTimeout(restoreScroll, 50);
+
+    // Si c'est une nouvelle carte, on attache les écouteurs d'événements
+    if (isNew) {
+      const closeBtn = card.querySelector("#anonymai-preview-close-btn");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideInputPreviewCard();
+        });
+      }
+
+      if (bodyEl) {
+        // Info-bulle et curseur au survol des mots
+        bodyEl.addEventListener("mousemove", (e) => {
+          let clickedObj = getWordAtPointFromEvent(e);
+          if (clickedObj) {
+            bodyEl.style.cursor = "pointer";
+            
+            let word = clickedObj.word;
+            let isHighlighted = e.target.classList.contains("anonymai-input-pii-highlight") || e.target.classList.contains("anonymai-input-pii-forced");
+            let tooltipText = "";
+            
+            if (isHighlighted) {
+              let origWord = word;
+              if (word.startsWith("[") && word.endsWith("]")) {
+                const mapped = sessionState.mappings[word];
+                if (mapped) origWord = mapped;
+              } else if (sessionState.mappings[word]) {
+                const mapped = sessionState.mappings[word];
+                if (mapped) origWord = mapped;
+              }
+              
+              const forced = isWordForced(origWord);
+              const sourceText = forced ? "Forcé manuellement" : "Détecté automatiquement";
+              const titleColor = forced ? "#60a5fa" : "#34d399";
+              
+              if (word !== origWord) {
+                tooltipText = `<span style="color: ${titleColor}; font-weight: 700;">🛡️ Valeur : ${escapeHTML(origWord)}</span> (${sourceText})<br><span style="color: #94a3b8; font-size: 9px;">🖱️ Clic G : Garder permanent | Clic D : Exclure</span>`;
+              } else {
+                tooltipText = `<span style="color: ${titleColor}; font-weight: 700;">🛡️ ${escapeHTML(origWord)}</span> (${sourceText})<br><span style="color: #94a3b8; font-size: 9px;">🖱️ Clic G : Garder permanent | Clic D : Exclure</span>`;
+              }
+            } else {
+              tooltipText = `<span style="color: #cbd5e1; font-weight: 700;">📝 ${escapeHTML(word)}</span> (Texte normal)<br><span style="color: #94a3b8; font-size: 9px;">🖱️ Clic G : Rendre vert | Clic D : Exclure</span>`;
+            }
+            
+            showPreviewTooltip(e.clientX, e.clientY, tooltipText);
+          } else {
+            bodyEl.style.cursor = "text";
+            hidePreviewTooltip();
+          }
+        });
+        
+        bodyEl.addEventListener("mouseleave", () => {
+          bodyEl.style.cursor = "text";
+          hidePreviewTooltip();
+        });
+
+        // 1. Clic gauche pour forcer (permanent)
+        bodyEl.addEventListener("click", (e) => {
+          if (e.target.closest("#anonymai-preview-close-btn")) return;
+          
+          if (justSelected) {
+            justSelected = false;
+            return;
+          }
+          
+          let clickedObj = getWordAtPointFromEvent(e);
+          if (clickedObj) {
+            let word = resolveTextWithMappings(clickedObj.word, sessionState);
+            
+            if (!config.forcedElements) config.forcedElements = [];
+            const exists = config.forcedElements.some(el => {
+              const val = typeof el === "object" ? el.value : el;
+              return val.toLowerCase() === word.toLowerCase();
+            });
+            if (!exists) {
+              config.forcedElements.push({ value: word, type: "FORCE" });
+            }
+            
+            if (config.excludedElements) {
+              config.excludedElements = config.excludedElements.filter(el => {
+                const val = typeof el === "object" ? el.value : el;
+                return val.toLowerCase() !== word.toLowerCase();
+              });
+            }
+            
+            const storage = chrome.storage.sync || chrome.storage.local;
+            storage.set({ forcedElements: config.forcedElements, excludedElements: config.excludedElements }, () => {
+              refreshPreviewAndInput();
+              showToast(`Mot '${word}' configuré en permanent.`, "success");
+            });
+          }
+        });
+        
+        // 2. Clic droit pour exclure
+        bodyEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          let word = "";
+          const selectedText = window.getSelection().toString().trim();
+          
+          if (selectedText.length > 1) {
+            word = resolveTextWithMappings(selectedText, sessionState);
+            window.getSelection().removeAllRanges();
+          } else {
+            let clickedObj = getWordAtPointFromEvent(e);
+            if (clickedObj) {
+              word = resolveTextWithMappings(clickedObj.word, sessionState);
+            }
+          }
+          
+          if (!word) return;
+          
+          if (!config.excludedElements) config.excludedElements = [];
+          const exists = config.excludedElements.some(el => {
+            const val = typeof el === "object" ? el.value : el;
+            return val.toLowerCase() === word.toLowerCase();
+          });
+          if (!exists) {
+            config.excludedElements.push(word);
+          }
+          
+          if (config.forcedElements) {
+            config.forcedElements = config.forcedElements.filter(el => {
+              const val = typeof el === "object" ? el.value : el;
+              return val.toLowerCase() !== word.toLowerCase();
+            });
+          }
+          
+          if (sessionState.mappings) {
+            let associatedToken = null;
+            for (const [key, val] of Object.entries(sessionState.mappings)) {
+              if (key.toLowerCase() === word.toLowerCase()) {
+                associatedToken = val;
+                delete sessionState.mappings[key];
+              } else if (val.toLowerCase() === word.toLowerCase()) {
+                associatedToken = key;
+                delete sessionState.mappings[key];
+              }
+            }
+            if (associatedToken) {
+              delete sessionState.mappings[associatedToken];
+              if (sessionState.generatedAliases) {
+                sessionState.generatedAliases = sessionState.generatedAliases.filter(a => a !== associatedToken);
+              }
+              if (sessionState.fullAliases) {
+                sessionState.fullAliases = sessionState.fullAliases.filter(a => a !== associatedToken);
+              }
+            }
+          }
+          
+          const storage = chrome.storage.sync || chrome.storage.local;
+          storage.set({ forcedElements: config.forcedElements, excludedElements: config.excludedElements }, () => {
+            refreshPreviewAndInput();
+            showToast(`Mot '${word}' exclu de la pseudonymisation.`, "info");
+          });
+        });
+        
+        // 3. Mouseup pour gérer la sélection de texte multiple
+        bodyEl.addEventListener("mouseup", (e) => {
+          if (e.button === 2) return;
+          
+          const selection = window.getSelection();
+          const selectedText = selection.toString().trim();
+          if (selectedText.length > 1) {
+            if (!bodyEl.contains(selection.anchorNode) || !bodyEl.contains(selection.focusNode)) {
+              return;
+            }
+            
+            justSelected = true;
+            setTimeout(() => {
+              justSelected = false;
+            }, 200);
+            
+            let resolvedText = resolveTextWithMappings(selectedText, sessionState);
+            if (!resolvedText || resolvedText.length <= 1) {
+              selection.removeAllRanges();
+              return;
+            }
+            
+            if (!config.forcedElements) config.forcedElements = [];
+            const exists = config.forcedElements.some(el => {
+              const val = typeof el === "object" ? el.value : el;
+              return val.toLowerCase() === resolvedText.toLowerCase();
+            });
+            if (!exists) {
+              config.forcedElements.push({ value: resolvedText, type: "FORCE" });
+            }
+            
+            if (config.excludedElements) {
+              config.excludedElements = config.excludedElements.filter(el => {
+                const val = typeof el === "object" ? el.value : el;
+                return val.toLowerCase() !== resolvedText.toLowerCase();
+              });
+            }
+            
+            const storage = chrome.storage.sync || chrome.storage.local;
+            storage.set({ forcedElements: config.forcedElements, excludedElements: config.excludedElements }, () => {
+              refreshPreviewAndInput();
+              showToast(`Sélection '${resolvedText}' configurée en permanent.`, "success");
+            });
+            
+            selection.removeAllRanges();
+          }
+        });
+      }
+    }
+  }
+
+  function hideInputPreviewCard() {
+    const card = document.getElementById("anonymai-input-preview");
+    if (card) card.remove();
+    hidePreviewTooltip();
   }
 
   // --- 8. SYSTÈME DE TOAST NOTIFICATION DANS LA PAGE ---

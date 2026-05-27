@@ -382,6 +382,50 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // --- 7c. EXPORT CSV ---
+  const exportCsvBtn = document.getElementById("export-csv-btn");
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener("click", () => {
+      storage.get({
+        forcedElements: [],
+        excludedElements: []
+      }, (items) => {
+        const forced = items.forcedElements || [];
+        const excluded = items.excludedElements || [];
+        
+        let csvRows = ["Terme;Type;Action"];
+        
+        // Add forced elements
+        forced.forEach(el => {
+          const val = el && typeof el === "object" ? el.value : el;
+          const type = el && typeof el === "object" ? (el.type || "FORCE") : "FORCE";
+          csvRows.push(`"${val.replace(/"/g, '""')}";${type};Forcer`);
+        });
+        
+        // Add excluded elements
+        excluded.forEach(el => {
+          const val = el && typeof el === "object" ? el.value : el;
+          csvRows.push(`"${val.replace(/"/g, '""')}";FORCE;Exclure`);
+        });
+        
+        // UTF-8 BOM to ensure accents are correctly displayed in Excel
+        const csvStr = "\ufeff" + csvRows.join("\n");
+        const blob = new Blob([csvStr], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `anonymai-regles-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showToast("Règles exportées en CSV avec succès !");
+      });
+    });
+  }
+
   // --- 7b. SAUVEGARDE AUTOMATIQUE JSON (GÉRÉE EN ARRIÈRE-PLAN) ---
   function triggerAutoBackup() {
     // La sauvegarde automatique est gérée de manière réactive par background.js
@@ -580,7 +624,12 @@ document.addEventListener("DOMContentLoaded", () => {
         "IBAN": "IBANs",
         "CARTE_BANCAIRE": "Cartes Bancaires",
         "CODE_POSTAL": "Codes Postaux",
-        "FORCE": "Termes forcés"
+        "FORCE": "Termes forcés",
+        "ADRESSE": "Adresses",
+        "PLAQUE_IMMATRICULATION": "Plaques Immat.",
+        "IDENTIFIANT_FISCAL": "No Fiscaux",
+        "MOT_DE_PASSE": "Mdp",
+        "CLE_API": "Clés d'API"
       };
 
       const categoryColors = {
@@ -595,7 +644,12 @@ document.addEventListener("DOMContentLoaded", () => {
         "IBAN": "#f59e0b",          // Amber
         "CARTE_BANCAIRE": "#f97316",// Orange
         "CODE_POSTAL": "#0ea5e9",   // Sky
-        "FORCE": "#64748b"          // Slate
+        "FORCE": "#64748b",         // Slate
+        "ADRESSE": "#fb7185",       // Rose-light
+        "PLAQUE_IMMATRICULATION": "#fb923c", // Orange-light
+        "IDENTIFIANT_FISCAL": "#a7f3d0", // Mint
+        "MOT_DE_PASSE": "#ec4899",   // Pink
+        "CLE_API": "#e11d48"        // Red
       };
 
       const defaultColor = "#cbd5e1";
