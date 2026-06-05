@@ -76,7 +76,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // 4. Charger et afficher la base locale des jetons de session (onglet courant)
   function loadSessionMappings() {
     const sessionKey = `session_tab_${currentTabId}`;
-    chrome.storage.local.get([sessionKey], (data) => {
+    const sessionStore = chrome.storage.session || chrome.storage.local;
+    sessionStore.get([sessionKey], (data) => {
       const sessionState = data[sessionKey];
       
       if (!sessionState || !sessionState.mappings || Object.keys(sessionState.mappings).length === 0) {
@@ -196,7 +197,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const sessionKey = `session_tab_${currentTabId}`;
     
     // Supprimer du stockage
-    chrome.storage.local.remove([sessionKey], () => {
+    const sessionStore = chrome.storage.session || chrome.storage.local;
+    sessionStore.remove([sessionKey], () => {
       showEmptyMappings();
       // Informer l'onglet de vider son état local en mémoire
       chrome.tabs.sendMessage(currentTabId, { action: "clear_session" }, () => {
@@ -209,4 +211,57 @@ document.addEventListener("DOMContentLoaded", () => {
   openOptionsBtn.addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });
+
+  // 9. Vérification du statut de la licence et mise à jour de l'UI
+  function checkLicense() {
+    chrome.runtime.sendMessage({ action: "check_license" }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.status) {
+        return;
+      }
+      const status = response.status;
+      const trialBanner = document.getElementById("trial-banner");
+      const premiumBanner = document.getElementById("premium-banner");
+      const gpoBanner = document.getElementById("gpo-banner-popup");
+      const paywallOverlay = document.getElementById("paywall-overlay");
+      const trialDays = document.getElementById("trial-days");
+
+      // Cacher tous les bandeaux et le paywall par défaut
+      if (trialBanner) trialBanner.classList.add("hidden");
+      if (premiumBanner) premiumBanner.classList.add("hidden");
+      if (gpoBanner) gpoBanner.classList.add("hidden");
+      if (paywallOverlay) paywallOverlay.classList.add("hidden");
+
+      if (status.active === false && status.reason === "expired") {
+        if (paywallOverlay) paywallOverlay.classList.remove("hidden");
+      } else if (status.active) {
+        if (status.reason === "trial") {
+          if (trialBanner) trialBanner.classList.remove("hidden");
+          if (trialDays) trialDays.textContent = status.daysRemaining;
+        } else if (status.reason === "subscribed") {
+          if (premiumBanner) premiumBanner.classList.remove("hidden");
+        } else if (status.reason === "managed") {
+          if (gpoBanner) gpoBanner.classList.remove("hidden");
+        }
+      }
+    });
+  }
+
+  // Lancer la vérification de licence au chargement
+  checkLicense();
+
+  // Gérer le clic sur le bouton s'abonner (bandeau d'essai)
+  const trialSubscribeBtn = document.getElementById("trial-subscribe-btn");
+  if (trialSubscribeBtn) {
+    trialSubscribeBtn.addEventListener("click", () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL("options.html#billing-tab") });
+    });
+  }
+
+  // Gérer le clic sur le bouton d'options (paywall)
+  const paywallOptionsBtn = document.getElementById("paywall-options-btn");
+  if (paywallOptionsBtn) {
+    paywallOptionsBtn.addEventListener("click", () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL("options.html#billing-tab") });
+    });
+  }
 });

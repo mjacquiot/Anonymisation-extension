@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "licenseKey": {
+      "type": "string",
+      "title": "Clé de licence AnonymAI",
+      "description": "La clé de licence globale pour la collectivité ou l'entreprise."
+    },
+    "globalContext": {
+      "type": "string",
+      "title": "Contexte Système Imposé",
+      "description": "Contexte système de pseudonymisation forcé par l'administrateur."
+    },
+    "forcedElements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "title": "Éléments à forcer administrativement",
+      "description": "Liste de mots qui seront toujours pseudonymisés."
+    },
+    "excludedElements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "title": "Éléments à exclure administrativement",
+      "description": "Liste de mots à ignorer lors de la pseudonymisation."
+    },
+    "policyDisableManualEdits": {
+      "type": "boolean",
+      "title": "Verrouiller les options",
+      "description": "Si actif, empêche les agents de modifier la configuration manuellement."
+    }
+  }
+}

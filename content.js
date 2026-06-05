@@ -25,6 +25,11 @@
   let observer = null;
   let justSelected = false;
 
+  // Variables de restauration visuelle HTML directe
+  let wasStreaming = false;
+  let restoreTimeout = null;
+  let streamingCheckInterval = null;
+
   // Fonction utilitaire pour normaliser les accents/diacritiques
   function removeDiacritics(str) {
     if (!str) return "";
@@ -122,8 +127,9 @@
     if (!tabId) return;
     const sessionKey = `session_tab_${tabId}`;
     
-    // Charger la session depuis le stockage local (spécifique à l'onglet)
-    chrome.storage.local.get([sessionKey], (localData) => {
+    // Charger la session depuis le stockage de session
+    const sessionStore = chrome.storage.session || chrome.storage.local;
+    sessionStore.get([sessionKey], (localData) => {
       if (localData[sessionKey]) {
         sessionState = localData[sessionKey];
       } else {
@@ -143,23 +149,69 @@
         customDictionaries: { names: [], locations: [], orgs: [] },
         pseudonymProfile: "standard"
       }, (syncData) => {
-        config.enabled = syncData.enabled !== false;
-        config.globalContext = syncData.globalContext || "";
-        config.forcedElements = syncData.forcedElements || [];
-        config.excludedElements = syncData.excludedElements || [];
-        config.pseudonymMode = syncData.pseudonymMode || "aliases";
-        config.showOverlay = syncData.showOverlay !== false;
-        config.customPatterns = syncData.customPatterns || [];
-        config.customDictionaries = syncData.customDictionaries || { names: [], locations: [], orgs: [] };
-        config.pseudonymProfile = syncData.pseudonymProfile || "standard";
+        // Lire d'abord les paramètres de politiques gérées (GPO)
+        chrome.storage.managed.get(null, (managedData) => {
+          const errManaged = chrome.runtime.lastError;
+          const finalManaged = managedData || {};
 
-        applyState();
+          config.enabled = syncData.enabled !== false;
+          
+          // GPO prioritaire pour le contexte global
+          config.globalContext = finalManaged.globalContext !== undefined ? finalManaged.globalContext : (syncData.globalContext || "");
+          
+          // Fusionner les listes d'éléments forcés (GPO + Utilisateur)
+          let userForced = syncData.forcedElements || [];
+          if (finalManaged.forcedElements && Array.isArray(finalManaged.forcedElements)) {
+            const forcedMap = new Map();
+            userForced.forEach(item => {
+              const val = item && typeof item === "object" ? item.value : item;
+              const type = item && typeof item === "object" ? (item.type || "FORCE") : "FORCE";
+              forcedMap.set(val.toLowerCase(), { value: val, type: type });
+            });
+            finalManaged.forcedElements.forEach(item => {
+              if (item) {
+                forcedMap.set(item.toLowerCase(), { value: item, type: "FORCE" });
+              }
+            });
+            config.forcedElements = Array.from(forcedMap.values());
+          } else {
+            config.forcedElements = userForced;
+          }
+
+          // Fusionner les listes d'éléments exclus (GPO + Utilisateur)
+          let userExcluded = syncData.excludedElements || [];
+          if (finalManaged.excludedElements && Array.isArray(finalManaged.excludedElements)) {
+            const excludedSet = new Set(userExcluded.map(e => (typeof e === "object" ? e.value : e).toLowerCase()));
+            finalManaged.excludedElements.forEach(e => {
+              if (e) excludedSet.add(e.toLowerCase());
+            });
+            config.excludedElements = Array.from(new Set([
+              ...userExcluded,
+              ...finalManaged.excludedElements.filter(e => e)
+            ]));
+          } else {
+            config.excludedElements = userExcluded;
+          }
+
+          config.pseudonymMode = syncData.pseudonymMode || "aliases";
+          config.showOverlay = syncData.showOverlay !== false;
+          config.customPatterns = syncData.customPatterns || [];
+          config.customDictionaries = syncData.customDictionaries || { names: [], locations: [], orgs: [] };
+          config.pseudonymProfile = syncData.pseudonymProfile || "standard";
+
+          applyState();
+        });
       });
     });
   }
 
   // Écouteur de modifications du stockage pour actualisation dynamique
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "managed") {
+      loadSessionAndSettings();
+      return;
+    }
+
     let needsReinit = false;
 
     // Traiter les changements de configuration globaux (sync ou local)
@@ -205,8 +257,8 @@
       }
     }
 
-    // La session de l'onglet est toujours stockée en local
-    if (areaName === "local" && tabId) {
+    // La session de l'onglet est toujours stockée en session
+    if ((areaName === "session" || areaName === "local") && tabId) {
       const sessionKey = `session_tab_${tabId}`;
       if (changes[sessionKey]) {
         sessionState = changes[sessionKey].newValue || { mappings: {}, counters: {} };
@@ -235,8 +287,17 @@
       sessionState = { mappings: {}, counters: {} };
       updateFabBadge();
       updateMappingsList();
+      removeRestoredSpans();
       showToast("Session de pseudonymisation réinitialisée.", "info");
-      // Optionnel : recharger la page pour enlever les surbrillances vertes si besoin
+    } else if (request.action === "prompt_force_type") {
+      showForceTypeModal(request.text);
+    } else if (request.action === "ocr_progress") {
+      updateOcrProgressUI(request.fileName, request.currentPage, request.totalPages, request.isOcr, request.statusText, request.percent);
+    } else if (request.action === "offscreen_log") {
+      console.log(`[AnonymAI Offscreen] [${request.type.toUpperCase()}] ${request.message}`);
+      if (request.type === "error") {
+        showToast("Erreur d'analyse : " + request.message, "error");
+      }
     }
   });
 
@@ -246,7 +307,7 @@
       injectUI();
       if (config.showOverlay) {
         startObserver();
-        walkAndRestore(document.body);
+        requestRestore();
       } else {
         stopObserver();
         removeRestoredSpans();
@@ -643,6 +704,8 @@
       pseudonymProfile: config.pseudonymProfile
     });
 
+    if (promptRes.expired) return;
+
     sessionState = promptRes.sessionState;
     saveSessionToStorage();
   }
@@ -698,8 +761,7 @@
 
       // Mettre à jour l'affichage vert sur la page
       if (config.showOverlay) {
-        removeRestoredSpans();
-        walkAndRestore(document.body);
+        requestRestore();
       }
     });
   }
@@ -770,6 +832,11 @@
       customDictionaries: config.customDictionaries,
       pseudonymProfile: config.pseudonymProfile
     });
+
+    if (promptRes.expired) {
+      showToast("Votre période d'essai ou votre abonnement AnonymAI est expiré. Veuillez activer votre licence pour continuer à protéger vos données.", "error");
+      return;
+    }
 
     let processedPrompt = promptRes.pseudonymizedText;
     sessionState = promptRes.sessionState;
@@ -991,27 +1058,274 @@
   function saveSessionToStorage() {
     if (!tabId) return;
     const sessionKey = `session_tab_${tabId}`;
-    chrome.storage.local.set({ [sessionKey]: sessionState }, () => {
+    const sessionStore = chrome.storage.session || chrome.storage.local;
+    sessionStore.set({ [sessionKey]: sessionState }, () => {
       updateFabBadge();
       updateMappingsList();
     });
   }
 
-  // --- 5. OBSERVATEUR DOM ET DE-PSEUDONYMISATION EN VERT ---
+  // --- 5. DÉTECTION DE STREAMING ET RESTAURATION VISUELLE HTML DIRECTE ---
+
+  function isAIStreaming() {
+    const streamingSelectors = [
+      // ChatGPT
+      'button[data-testid="stop-button"]',
+      'button[aria-label="Stop generating"]',
+      'button[aria-label="Interrompre la génération"]',
+      '.streaming',
+      '.result-streaming',
+      // Claude
+      'button[aria-label="Stop generating"]',
+      'button[aria-label="Stop Response"]',
+      'button[aria-label="Interrompre la réponse"]',
+      // Gemini
+      'button[aria-label="Interrompre la réponse"]',
+      'button[aria-label="Stop response"]',
+      'button[aria-label="Interrompre la génération"]',
+      'mat-progress-bar',
+      // Sélecteurs génériques
+      '.generating',
+      '.is-generating',
+      '.loading'
+    ];
+    for (const selector of streamingSelectors) {
+      const el = document.querySelector(selector);
+      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getMatchesForTextNode(textNode) {
+    const text = textNode.nodeValue;
+    if (!text || text.trim().length === 0) return [];
+
+    const candidates = [];
+    const generatedAliases = sessionState.generatedAliases || [];
+
+    // 1. Recherche des jetons pseudonymisés [TYPE_ID]
+    const tokenRegex = /\[([A-Z_]+)_(\d+)\]/g;
+    let match;
+    while ((match = tokenRegex.exec(text)) !== null) {
+      const token = match[0];
+      const origValue = sessionState.mappings[token];
+      if (origValue) {
+        candidates.push({
+          start: match.index,
+          end: match.index + token.length,
+          tokenOrAlias: token,
+          originalValue: origValue,
+          isToken: true
+        });
+      }
+    }
+
+    // 2. Recherche des alias réalistes générés
+    if (generatedAliases.length > 0) {
+      const normalizedText = removeDiacritics(text).toLowerCase();
+      const sortedAliases = [...generatedAliases].sort((a, b) => b.length - a.length);
+      
+      for (const alias of sortedAliases) {
+        if (!alias || alias.trim().length === 0) continue;
+        const normalizedAlias = removeDiacritics(alias).toLowerCase();
+        
+        let idx = normalizedText.indexOf(normalizedAlias);
+        while (idx !== -1) {
+          const origValue = sessionState.mappings[alias];
+          if (origValue) {
+            candidates.push({
+              start: idx,
+              end: idx + alias.length,
+              tokenOrAlias: alias,
+              originalValue: origValue,
+              isToken: false
+            });
+          }
+          idx = normalizedText.indexOf(normalizedAlias, idx + 1);
+        }
+      }
+    }
+
+    if (candidates.length === 0) return [];
+
+    // 3. Résolution des chevauchements
+    candidates.sort((a, b) => {
+      if (a.isToken !== b.isToken) {
+        return a.isToken ? -1 : 1;
+      }
+      const lenA = a.end - a.start;
+      const lenB = b.end - b.start;
+      if (lenA !== lenB) {
+        return lenB - lenA;
+      }
+      return a.start - b.start;
+    });
+
+    const selected = [];
+    const isIntervalOverlap = (start, end) => {
+      return selected.some(s => !(end <= s.start || start >= s.end));
+    };
+
+    for (const cand of candidates) {
+      if (!isIntervalOverlap(cand.start, cand.end)) {
+        selected.push(cand);
+      }
+    }
+
+    selected.sort((a, b) => a.start - b.start);
+    return selected;
+  }
+
+  function restoreTextNode(textNode, matches) {
+    const parent = textNode.parentNode;
+    if (!parent) return;
+
+    const text = textNode.nodeValue;
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+
+    for (const match of matches) {
+      if (match.start > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.start)));
+      }
+
+      const span = document.createElement("span");
+      span.className = "anonym-restored";
+      span.textContent = match.originalValue;
+      span.setAttribute("data-token", match.tokenOrAlias);
+      span.setAttribute("title", `Valeur originale : ${match.originalValue} (Jeton/Alias : ${match.tokenOrAlias})`);
+      fragment.appendChild(span);
+
+      lastIndex = match.end;
+    }
+
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+    }
+
+    parent.replaceChild(fragment, textNode);
+  }
+
+  function walkAndRestore(node) {
+    if (!node) return;
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (node.classList.contains("anonymai-ui")) return;
+      if (["SCRIPT", "STYLE", "TEXTAREA", "INPUT"].includes(node.tagName)) return;
+      if (node.getAttribute("contenteditable") === "true") return;
+      if (node.classList.contains("anonym-restored")) return;
+    }
+
+    let child = node.firstChild;
+    while (child) {
+      const next = child.nextSibling;
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        walkAndRestore(child);
+      } else if (child.nodeType === Node.TEXT_NODE) {
+        const matches = getMatchesForTextNode(child);
+        if (matches.length > 0) {
+          restoreTextNode(child, matches);
+        }
+      }
+      child = next;
+    }
+  }
+
+  function removeRestoredSpans() {
+    const spans = document.querySelectorAll("span.anonym-restored");
+    for (const span of spans) {
+      const parent = span.parentNode;
+      if (parent) {
+        const token = span.getAttribute("data-token");
+        if (token) {
+          const textNode = document.createTextNode(token);
+          parent.replaceChild(textNode, span);
+        } else {
+          const textNode = document.createTextNode(span.textContent);
+          parent.replaceChild(textNode, span);
+        }
+      }
+    }
+    document.body.normalize();
+  }
+
+  function requestRestore() {
+    if (!config.enabled || !config.showOverlay) return;
+    if (isAIStreaming()) {
+      wasStreaming = true;
+      return;
+    }
+
+    if (restoreTimeout) clearTimeout(restoreTimeout);
+    restoreTimeout = setTimeout(() => {
+      if (isAIStreaming()) {
+        wasStreaming = true;
+        return;
+      }
+      if (wasStreaming) {
+        wasStreaming = false;
+      }
+      walkAndRestore(document.body);
+    }, 150);
+  }
+
+  function startStreamingMonitor() {
+    if (streamingCheckInterval) return;
+    streamingCheckInterval = setInterval(() => {
+      if (!config.enabled || !config.showOverlay) return;
+
+      const streaming = isAIStreaming();
+      if (streaming) {
+        wasStreaming = true;
+      } else if (wasStreaming) {
+        wasStreaming = false;
+        setTimeout(() => {
+          if (!isAIStreaming()) {
+            walkAndRestore(document.body);
+          }
+        }, 300);
+      }
+    }, 500);
+  }
+
+  function stopStreamingMonitor() {
+    if (streamingCheckInterval) {
+      clearInterval(streamingCheckInterval);
+      streamingCheckInterval = null;
+    }
+  }
+
   function startObserver() {
     if (observer) return;
-    
+
     observer = new MutationObserver((mutations) => {
-      // Bloquer l'observation pendant l'injection des spans pour éviter la récursion infinie
-      stopObserver();
-      walkAndRestore(document.body);
-      startObserver();
+      if (isAIStreaming()) {
+        wasStreaming = true;
+        return;
+      }
+
+      if (wasStreaming) {
+        wasStreaming = false;
+        setTimeout(() => {
+          if (!isAIStreaming()) {
+            walkAndRestore(document.body);
+          }
+        }, 300);
+        return;
+      }
+
+      requestRestore();
     });
 
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
+      characterData: true
     });
+
+    startStreamingMonitor();
   }
 
   function stopObserver() {
@@ -1019,126 +1333,7 @@
       observer.disconnect();
       observer = null;
     }
-  }
-
-  // Parcours le DOM de manière optimisée pour injecter les correspondances vertes
-  function walkAndRestore(node) {
-    if (!config.enabled) return;
-    if (!sessionState || !sessionState.mappings || Object.keys(sessionState.mappings).length === 0) return;
-
-    // Ignorer les éléments de notre extension, scripts, styles et zones d'écriture
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.classList.contains("anonymai-ui")) return;
-      if (["SCRIPT", "STYLE", "TEXTAREA", "INPUT"].includes(node.tagName)) return;
-      if (node.getAttribute("contenteditable") === "true") return;
-    }
-
-    // Parcourir les enfants
-    let child = node.firstChild;
-    while (child) {
-      const next = child.nextSibling;
-      if (child.nodeType === Node.ELEMENT_NODE) {
-        walkAndRestore(child);
-      } else if (child.nodeType === Node.TEXT_NODE) {
-        restoreTextNode(child);
-      }
-      child = next;
-    }
-  }
-
-  function restoreTextNode(textNode) {
-    const text = textNode.nodeValue;
-    if (!text || text.trim().length === 0) return;
-
-    const generatedAliases = sessionState.generatedAliases || [];
-
-    // 1. Recherche des jetons de pseudonymisation [TYPE_ID]
-    const tokenRegex = /\[([A-Z_]+)_(\d+)\]/g;
-    tokenRegex.lastIndex = 0;
-    const match = tokenRegex.exec(text);
-
-    if (match) {
-      const token = match[0];
-      const origValue = sessionState.mappings[token];
-
-      if (origValue) {
-        replaceMatchInNode(textNode, match.index, token.length, token, origValue);
-        return;
-      }
-    }
-
-    // 2. Recherche des alias réalistes générés (insensible à la casse et aux accents)
-    if (generatedAliases.length > 0) {
-      const normalizedText = removeDiacritics(text).toLowerCase();
-      const sortedAliases = [...generatedAliases].sort((a, b) => b.length - a.length);
-      for (const alias of sortedAliases) {
-        const normalizedAlias = removeDiacritics(alias).toLowerCase();
-        const index = normalizedText.indexOf(normalizedAlias);
-        if (index !== -1) {
-          const origValue = sessionState.mappings[alias];
-          if (origValue) {
-            replaceMatchInNode(textNode, index, alias.length, alias, origValue);
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  function replaceMatchInNode(textNode, index, matchLength, aliasOrToken, origValue) {
-    const text = textNode.nodeValue;
-    const beforeText = text.substring(0, index);
-    const afterText = text.substring(index + matchLength);
-
-    const beforeNode = document.createTextNode(beforeText);
-    const afterNode = document.createTextNode(afterText);
-
-    const span = document.createElement("span");
-    span.className = "anonym-restored anonymai-ui";
-    span.setAttribute("data-token", aliasOrToken);
-    span.title = `Valeur originale : ${origValue} (Alias: ${aliasOrToken})`;
-    span.textContent = origValue;
-
-    // Style vert haut de gamme identique pour les deux modes
-    Object.assign(span.style, {
-      color: '#065f46',
-      fontWeight: 'bold',
-      backgroundColor: '#ecfdf5',
-      padding: '2px 6px',
-      borderRadius: '4px',
-      border: '1px solid #a7f3d0',
-      display: 'inline',
-      fontFamily: 'inherit',
-      fontSize: 'inherit',
-      cursor: 'help',
-      textDecoration: 'none'
-    });
-
-    const parent = textNode.parentNode;
-    if (parent) {
-      parent.insertBefore(beforeNode, textNode);
-      parent.insertBefore(span, textNode);
-      parent.insertBefore(afterNode, textNode);
-      parent.removeChild(textNode);
-
-      // Récurser sur la partie après
-      restoreTextNode(afterNode);
-
-    }
-  }
-
-  function removeRestoredSpans() {
-    const spans = document.querySelectorAll("span.anonym-restored");
-    spans.forEach(span => {
-      const token = span.getAttribute("data-token");
-      if (token) {
-        const textNode = document.createTextNode(token);
-        if (span.parentNode) {
-          span.parentNode.replaceChild(textNode, span);
-        }
-      }
-    });
-    document.body.normalize();
+    stopStreamingMonitor();
   }
 
   // --- 6. CRÉATION ET INJECTION DU FLOATING PANEL & FAB ---
@@ -1243,12 +1438,12 @@
             <div class="anonymai-dropzone anonymai-ui" id="anonymai-dropzone" style="padding: 16px 12px; min-height: 80px; justify-content: center;">
               <span class="anonymai-dropzone-icon anonymai-ui">📂</span>
               <span class="anonymai-dropzone-text anonymai-ui">Glissez des fichiers ou un dossier ici</span>
-              <span class="anonymai-dropzone-subtext anonymai-ui">PDF, Word, Text (.txt, .docx, .pdf)</span>
+              <span class="anonymai-dropzone-subtext anonymai-ui">PDF, Word, Images, Texte (.txt, .docx, .pdf, .png, .jpg)</span>
               <div class="anonymai-ui" style="margin-top: 8px; display: flex; gap: 8px; justify-content: center; width: 100%;">
                 <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-select-files-btn" style="padding: 4px 8px; font-size: 11px; flex-grow: 1;">Fichiers</button>
                 <button class="anonymai-btn anonymai-btn-secondary anonymai-ui" id="anonymai-select-folder-btn" style="padding: 4px 8px; font-size: 11px; flex-grow: 1;">Dossier</button>
               </div>
-              <input type="file" id="anonymai-file-input" accept=".txt,.csv,.md,.pdf,.docx" multiple style="display:none;">
+              <input type="file" id="anonymai-file-input" accept=".txt,.csv,.md,.pdf,.docx,.png,.jpg,.jpeg,.webp" multiple style="display:none;">
               <input type="file" id="anonymai-folder-input" webkitdirectory directory style="display:none;">
             </div>
             <div id="anonymai-global-progress-container" class="anonymai-ui" style="display: none; width: 100%; margin-top: 10px; padding: 8px 12px; background-color: #0f172a; border-radius: 6px; border: 1px solid #334155; box-sizing: border-box;">
@@ -1415,8 +1610,7 @@
             analyzeInputRealtime(inputEl);
           }
           if (config.showOverlay) {
-            removeRestoredSpans();
-            walkAndRestore(document.body);
+            requestRestore();
           }
         });
       });
@@ -1631,8 +1825,7 @@
           
           // Rafraîchir les surbrillances vertes sur la page
           if (config.showOverlay) {
-            removeRestoredSpans();
-            walkAndRestore(document.body);
+            requestScanAndRender();
           }
         });
       });
@@ -1955,11 +2148,15 @@
     const progressContainer = document.getElementById("anonymai-global-progress-container");
     const progressText = document.getElementById("anonymai-global-progress-text");
     const progressBar = document.getElementById("anonymai-global-progress-bar");
+    const progressLabel = progressContainer ? progressContainer.querySelector("div > span:first-child") : null;
     
     if (progressContainer) {
       progressContainer.style.display = "block";
       progressText.textContent = `0 / ${files.length}`;
       progressBar.style.width = "0%";
+      if (progressLabel) {
+        progressLabel.textContent = "Préparation des documents...";
+      }
     }
 
     let processedCount = 0;
@@ -1985,6 +2182,9 @@
       if (progressContainer) {
         progressText.textContent = `${processedCount} / ${files.length}`;
         progressBar.style.width = `${(processedCount / files.length) * 100}%`;
+        if (progressLabel) {
+          progressLabel.textContent = "Traitement des documents...";
+        }
       }
     }
 
@@ -2003,25 +2203,116 @@
     }
   }
 
+  function updateOcrProgressUI(fileName, currentPage, totalPages, isOcr, statusText, percent) {
+    const progressContainer = document.getElementById("anonymai-global-progress-container");
+    const progressText = document.getElementById("anonymai-global-progress-text");
+    const progressBar = document.getElementById("anonymai-global-progress-bar");
+    const progressLabel = progressContainer ? progressContainer.querySelector("div > span:first-child") : null;
+
+    if (progressContainer) {
+      progressContainer.style.display = "block";
+    }
+    
+    if (statusText) {
+      if (progressLabel) progressLabel.textContent = statusText;
+    } else {
+      if (progressLabel) {
+        progressLabel.textContent = `Analyse de ${fileName} (${isOcr ? 'OCR Tesseract' : 'Texte Numérique'})...`;
+      }
+    }
+
+    if (percent !== undefined) {
+      if (progressBar) progressBar.style.width = `${percent}%`;
+      if (progressText) {
+        if (currentPage && totalPages) {
+          progressText.textContent = `${currentPage} / ${totalPages} (${percent}%)`;
+        } else {
+          progressText.textContent = `${percent}%`;
+        }
+      }
+    } else {
+      if (progressText && currentPage && totalPages) {
+        progressText.textContent = `${currentPage} / ${totalPages}`;
+      }
+      if (progressBar && currentPage && totalPages) {
+        progressBar.style.width = `${(currentPage / totalPages) * 100}%`;
+      }
+    }
+  }
+
   async function processSingleFile(file, fileObj) {
     try {
       let extractedText = "";
       const extension = file.name.split('.').pop().toLowerCase();
 
-      if (extension === "pdf") {
-        const arrayBuffer = await file.arrayBuffer();
-        extractedText = await extractTextFromPDF(arrayBuffer);
+      if (extension === "pdf" || ["png", "jpg", "jpeg", "webp"].includes(extension)) {
+        fileObj.status = "processing";
+        if (extension === "pdf") {
+          fileObj.processedText = "[Extraction / OCR du PDF en cours...]";
+        } else {
+          fileObj.processedText = "[OCR de l'image en cours...]";
+        }
+        updateTextareaContent();
+
+        // Mettre à jour l'UI avec l'état initial
+        updateOcrProgressUI(file.name, 0, 100, false, `Lecture locale de ${file.name}...`, 2);
+
+        // Convertir le fichier en Base64 pour un passage de message fiable
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (typeof reader.result === 'string') {
+              const b64 = reader.result.split(',')[1];
+              resolve(b64);
+            } else {
+              reject(new Error("Échec de la lecture du fichier en Base64."));
+            }
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+
+        // Signaler le début du traitement background
+        updateOcrProgressUI(file.name, 0, 100, false, `Initialisation du service d'extraction pour ${file.name}...`, 5);
+
+        // Envoyer au background pour traitement offscreen
+        const response = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({
+            action: "process_file",
+            fileData: {
+              name: file.name,
+              type: file.type,
+              base64: base64
+            }
+          }, (res) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(res);
+            }
+          });
+        });
+
+        if (response && response.success) {
+          extractedText = response.text;
+        } else {
+          throw new Error((response && response.error) || "Échec de l'extraction OCR.");
+        }
       } else if (extension === "docx") {
+        updateOcrProgressUI(file.name, 0, 100, false, `Lecture locale du fichier Word ${file.name}...`, 20);
         const arrayBuffer = await file.arrayBuffer();
         extractedText = await extractTextFromDocx(arrayBuffer);
       } else {
         // Plain text (.txt, .csv, .md, etc.)
+        updateOcrProgressUI(file.name, 0, 100, false, `Lecture locale du fichier texte ${file.name}...`, 20);
         extractedText = await extractTextFromPlain(file);
       }
 
       if (!extractedText || extractedText.trim().length === 0) {
         throw new Error("Le document est vide ou protégé.");
       }
+
+      updateOcrProgressUI(file.name, 100, 100, false, "Pseudonymisation en cours...", 95);
 
       fileObj.rawText = extractedText;
 
@@ -2083,7 +2374,7 @@
       return new Promise((resolve) => {
         entry.file((file) => {
           const ext = file.name.split('.').pop().toLowerCase();
-          if (['txt', 'csv', 'md', 'pdf', 'docx'].includes(ext)) {
+          if (['txt', 'csv', 'md', 'pdf', 'docx', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
             resolve([file]);
           } else {
             resolve([]); // Ignorer les formats non supportés
@@ -2225,6 +2516,7 @@
     if (ext === 'pdf') return '📕';
     if (ext === 'docx') return '📘';
     if (['txt', 'csv', 'md'].includes(ext)) return '📝';
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(ext)) return '🖼️';
     return '📄';
   }
 
@@ -2284,7 +2576,7 @@
     renderFilesList();
   }
 
-  // Extraction PDF local via pdf.js
+  // Extraction PDF local via pdf.js avec tri géométrique des coordonnées
   async function extractTextFromPDF(arrayBuffer) {
     try {
       // Charger le module de façon dynamique depuis l'extension
@@ -2309,20 +2601,76 @@
       }
 
       let fullText = "";
+      
       for (let i = 1; i <= pdf.numPages; i++) {
         try {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
-          // Concaténer le texte de la page de façon robuste
-          const pageText = textContent.items
-            .filter(item => item && typeof item.str === 'string')
-            .map(item => item.str)
-            .join(" ");
-          fullText += pageText + "\n";
+          const items = textContent.items.filter(item => item && typeof item.str === 'string' && Array.isArray(item.transform) && item.transform.length >= 6);
+
+          // Seuil de tolérance verticale (en points/pixels) pour regrouper sur une même ligne
+          const lineThreshold = 5;
+          const lines = [];
+          let currentLine = [];
+          let currentY = null;
+
+          // Tri par coordonnée Y décroissante (de haut en bas)
+          // Note: transform[5] correspond à la coordonnée Y, transform[4] correspond à la coordonnée X
+          const sortedItems = [...items].sort((a, b) => b.transform[5] - a.transform[5]);
+
+          for (const item of sortedItems) {
+            const y = item.transform[5];
+            if (currentY === null) {
+              currentY = y;
+              currentLine.push(item);
+            } else if (Math.abs(y - currentY) <= lineThreshold) {
+              currentLine.push(item);
+            } else {
+              // Trier la ligne complétée par X (de gauche à droite)
+              currentLine.sort((a, b) => a.transform[4] - b.transform[4]);
+              lines.push(currentLine);
+              // Démarrer une nouvelle ligne
+              currentLine = [item];
+              currentY = y;
+            }
+          }
+
+          if (currentLine.length > 0) {
+            currentLine.sort((a, b) => a.transform[4] - b.transform[4]);
+            lines.push(currentLine);
+          }
+
+          // Reconstruire la ligne de texte de la page
+          const pageText = lines.map(line => {
+            let lineStr = "";
+            for (let j = 0; j < line.length; j++) {
+              const str = line[j].str;
+              if (j === 0) {
+                lineStr = str;
+              } else {
+                const prev = lineStr;
+                const prevEndsSpace = prev.endsWith(" ") || prev.endsWith("\t");
+                const nextStartsSpace = str.startsWith(" ") || str.startsWith("\t");
+                if (prevEndsSpace || nextStartsSpace) {
+                  lineStr += str;
+                } else {
+                  lineStr += " " + str;
+                }
+              }
+            }
+            return lineStr;
+          }).join("\n");
+
+          fullText += pageText + "\n\n";
         } catch (pageErr) {
           console.warn(`Erreur lors de l'extraction de la page ${i}:`, pageErr);
           fullText += `[Erreur d'extraction sur la page ${i}]\n`;
         }
+      }
+
+      const trimmedText = fullText.trim();
+      if (trimmedText.length < 15 && pdf.numPages > 0) {
+        showToast("Ce document semble être un scan d'image sans texte éditable.", "info");
       }
 
       return fullText;
@@ -2856,6 +3204,141 @@
     const card = document.getElementById("anonymai-input-preview");
     if (card) card.remove();
     hidePreviewTooltip();
+  }
+
+  function showForceTypeModal(textToForce) {
+    // Supprimer tout modal existant
+    const existingOverlay = document.getElementById("anonymai-force-modal-overlay");
+    if (existingOverlay) existingOverlay.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "anonymai-force-modal-overlay";
+    overlay.className = "anonymai-modal-overlay anonymai-ui";
+
+    overlay.innerHTML = `
+      <div class="anonymai-modal-card">
+        <div class="anonymai-modal-header">
+          <h3 class="anonymai-modal-title">🛡️ Catégorie de Pseudonymisation</h3>
+          <button class="anonymai-modal-close-icon" id="anonymai-modal-close-btn">&times;</button>
+        </div>
+        <div class="anonymai-modal-body">
+          <p class="anonymai-modal-description">
+            Sélectionnez la catégorie appropriée pour forcer la pseudonymisation de cet élément :
+          </p>
+          <div class="anonymai-modal-highlight-box">
+            <span>Texte sélectionné</span>
+            ${escapeHTML(textToForce)}
+          </div>
+          <div class="anonymai-modal-grid">
+            <button class="anonymai-modal-btn" data-type="NOM_PRENOM">
+              <span class="anonymai-modal-btn-icon">👤</span> Nom complet
+            </button>
+            <button class="anonymai-modal-btn" data-type="PRENOM">
+              <span class="anonymai-modal-btn-icon">👶</span> Prénom
+            </button>
+            <button class="anonymai-modal-btn" data-type="NOM">
+              <span class="anonymai-modal-btn-icon">🏷️</span> Nom de famille
+            </button>
+            <button class="anonymai-modal-btn" data-type="VILLE">
+              <span class="anonymai-modal-btn-icon">📍</span> Lieu / Ville
+            </button>
+            <button class="anonymai-modal-btn" data-type="ORGANISATION">
+              <span class="anonymai-modal-btn-icon">🏢</span> Organisation
+            </button>
+            <button class="anonymai-modal-btn" data-type="FORCE">
+              <span class="anonymai-modal-btn-icon">⚙️</span> Autre / Générique
+            </button>
+          </div>
+        </div>
+        <div class="anonymai-modal-footer">
+          <button class="anonymai-modal-cancel-btn" id="anonymai-modal-cancel-btn">Annuler</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Activer l'animation d'entrée
+    setTimeout(() => {
+      overlay.classList.add("anonymai-modal-active");
+    }, 10);
+
+    const closeModal = () => {
+      overlay.classList.remove("anonymai-modal-active");
+      setTimeout(() => {
+        overlay.remove();
+      }, 300);
+    };
+
+    // Events
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeModal();
+    });
+
+    const closeBtn = overlay.querySelector("#anonymai-modal-close-btn");
+    if (closeBtn) closeBtn.addEventListener("click", closeModal);
+
+    const cancelBtn = overlay.querySelector("#anonymai-modal-cancel-btn");
+    if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+    const buttons = overlay.querySelectorAll(".anonymai-modal-btn");
+    buttons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const type = btn.getAttribute("data-type");
+        const val = textToForce.trim();
+        
+        // Retirer des exclusions si présent
+        if (config.excludedElements) {
+          config.excludedElements = config.excludedElements.filter(e => {
+            const ev = typeof e === "object" ? e.value : e;
+            return ev.toLowerCase() !== val.toLowerCase();
+          });
+        }
+
+        // Ajouter aux forçages
+        if (!config.forcedElements) config.forcedElements = [];
+        const alreadyExists = config.forcedElements.some(e => {
+          const ev = typeof e === "object" ? e.value : e;
+          return ev.toLowerCase() === val.toLowerCase();
+        });
+
+        if (!alreadyExists) {
+          config.forcedElements.push({ value: val, type: type });
+        } else {
+          config.forcedElements = config.forcedElements.map(e => {
+            const ev = typeof e === "object" ? e.value : e;
+            if (ev.toLowerCase() === val.toLowerCase()) {
+              return { value: val, type: type };
+            }
+            return e;
+          });
+        }
+
+        const storage = chrome.storage.sync || chrome.storage.local;
+        storage.set({ 
+          forcedElements: config.forcedElements,
+          excludedElements: config.excludedElements || []
+        }, () => {
+          // Ré-analyser la zone de saisie
+          const inputEl = findAIInput();
+          if (inputEl) {
+            analyzeInputRealtime(inputEl);
+          }
+          
+          // Rafraîchir les surbrillances vertes sur la page
+          if (config.showOverlay) {
+            requestScanAndRender();
+          }
+
+          // Mettre à jour l'aperçu si ouvert
+          refreshPreviewAndInput();
+
+          showToast(`"${val}" est désormais toujours pseudonymisé comme "${type}".`, "success");
+        });
+
+        closeModal();
+      });
+    });
   }
 
   // --- 8. SYSTÈME DE TOAST NOTIFICATION DANS LA PAGE ---

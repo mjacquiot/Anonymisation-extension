@@ -828,3 +828,185 @@
 #anonymai-preview-tooltip {
   transition: opacity 0.1s ease, transform 0.1s ease !important;
 }
+
+/* --- MODAL DE SELECTION DE TYPE (FORÇAGE) PREMIUM --- */
+.anonymai-modal-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background-color: rgba(15, 23, 42, 0.65) !important; /* Slate-900 semi-transparent */
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  z-index: 9999999 !important; /* Au-dessus de tous les éléments */
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.anonymai-modal-overlay.anonymai-modal-active {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+.anonymai-modal-card {
+  width: 90% !important;
+  max-width: 480px !important;
+  background: rgba(15, 23, 42, 0.88) !important; /* Arrière-plan verre dépoli */
+  border: 1px solid rgba(51, 65, 85, 0.8) !important; /* Slate-700 */
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px rgba(16, 185, 129, 0.15) !important; /* Halo émeraude */
+  border-radius: 16px !important;
+  padding: 24px !important;
+  color: #f8fafc !important;
+  font-family: 'Outfit', 'Inter', sans-serif !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+  transform: scale(0.9) translateY(20px) !important;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  user-select: none !important;
+}
+
+.anonymai-modal-overlay.anonymai-modal-active .anonymai-modal-card {
+  transform: scale(1) translateY(0) !important;
+}
+
+.anonymai-modal-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5) !important;
+  padding-bottom: 12px !important;
+}
+
+.anonymai-modal-title {
+  margin: 0 !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  background: linear-gradient(135deg, #34d399, #10b981) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.anonymai-modal-close-icon {
+  background: none !important;
+  border: none !important;
+  color: #94a3b8 !important;
+  font-size: 20px !important;
+  cursor: pointer !important;
+  line-height: 1 !important;
+  transition: color 0.2s ease !important;
+}
+
+.anonymai-modal-close-icon:hover {
+  color: #ef4444 !important;
+}
+
+.anonymai-modal-body {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 14px !important;
+}
+
+.anonymai-modal-description {
+  font-size: 13.5px !important;
+  color: #94a3b8 !important;
+  line-height: 1.5 !important;
+  margin: 0 !important;
+}
+
+.anonymai-modal-highlight-box {
+  background: rgba(30, 41, 59, 0.6) !important;
+  border: 1px dashed rgba(16, 185, 129, 0.3) !important;
+  border-radius: 8px !important;
+  padding: 10px 14px !important;
+  font-size: 14.5px !important;
+  color: #34d399 !important;
+  font-weight: 600 !important;
+  word-break: break-all !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+
+.anonymai-modal-highlight-box span {
+  font-size: 10px !important;
+  color: #64748b !important;
+  font-weight: 400 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+.anonymai-modal-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 10px !important;
+  margin-top: 6px !important;
+}
+
+.anonymai-modal-btn {
+  background: rgba(30, 41, 59, 0.7) !important;
+  border: 1px solid rgba(51, 65, 85, 0.6) !important;
+  border-radius: 10px !important;
+  padding: 12px 14px !important;
+  color: #f1f5f9 !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  text-align: left !important;
+  font-family: inherit !important;
+}
+
+.anonymai-modal-btn:hover {
+  background: rgba(16, 185, 129, 0.12) !important;
+  border-color: #34d399 !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15) !important;
+}
+
+.anonymai-modal-btn:active {
+  transform: translateY(0) !important;
+}
+
+.anonymai-modal-btn-icon {
+  font-size: 16px !important;
+}
+
+.anonymai-modal-footer {
+  display: flex !important;
+  justify-content: flex-end !important;
+  margin-top: 4px !important;
+  border-top: 1px solid rgba(51, 65, 85, 0.3) !important;
+  padding-top: 12px !important;
+}
+
+.anonymai-modal-cancel-btn {
+  background: none !important;
+  border: 1px solid rgba(148, 163, 184, 0.3) !important;
+  border-radius: 8px !important;
+  padding: 8px 16px !important;
+  color: #94a3b8 !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+  font-family: inherit !important;
+}
+
+.anonymai-modal-cancel-btn:hover {
+  background: rgba(148, 163, 184, 0.1) !important;
+  color: #f1f5f9 !important;
+  border-color: rgba(148, 163, 184, 0.6) !important;
+}
+

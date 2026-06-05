@@ -28,6 +28,18 @@
       </div>
     </header>
 
+    <!-- License Status Banners -->
+    <div id="trial-banner" class="trial-banner hidden">
+      <span>⏳ Essai : <strong id="trial-days">30</strong> jours restants</span>
+      <button id="trial-subscribe-btn" class="btn btn-primary btn-sm">S'abonner</button>
+    </div>
+    <div id="premium-banner" class="premium-banner hidden">
+      <span>💎 AnonymAI Premium Actif</span>
+    </div>
+    <div id="gpo-banner-popup" class="gpo-banner hidden">
+      <span>🏢 Géré par votre organisation</span>
+    </div>
+
     <!-- Main Content -->
     <main class="app-content">
       <!-- Status Alert -->
@@ -104,6 +116,18 @@
       </button>
       <div class="footer-info">v1.0.0 • 100% Local</div>
     </footer>
+  </div>
+
+  <!-- Paywall Overlay -->
+  <div id="paywall-overlay" class="paywall-overlay hidden">
+    <div class="paywall-content">
+      <span class="paywall-icon">🔒</span>
+      <h2>Abonnement requis</h2>
+      <p>Votre période d'essai gratuite de 30 jours est expirée. Veuillez vous abonner pour continuer à utiliser l'extension AnonymAI.</p>
+      <a href="https://checkout.stripe.com/demo-anonymai" id="paywall-subscribe-btn" target="_blank" class="btn btn-primary">S'abonner (0,99€/mois)</a>
+      <button id="paywall-options-btn" class="btn btn-secondary">Saisir une clé de licence</button>
+      <div class="paywall-footer">Traitement 100% Local • RGPD</div>
+    </div>
   </div>
 
   <script src="popup.js"></script>

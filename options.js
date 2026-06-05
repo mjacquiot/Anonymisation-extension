@@ -59,6 +59,7 @@ document.addEventListener("DOMContentLoaded", () => {
       else if (tabId === "exclude-tab") tabTitle.textContent = "Éléments à Exclure";
       else if (tabId === "backup-tab") tabTitle.textContent = "Sauvegarde & Import";
       else if (tabId === "advanced-tab") tabTitle.textContent = "Options Avancées";
+      else if (tabId === "billing-tab") tabTitle.textContent = "Abonnement & Licence";
     });
   });
 
@@ -1058,7 +1059,238 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // --- GESTION GPO / POLITIQUES D'ENTREPRISE ---
+  function checkGPOLockedStatus() {
+    chrome.storage.managed.get(null, (managedData) => {
+      if (chrome.runtime.lastError || !managedData || Object.keys(managedData).length === 0) {
+        return; // Pas de politique GPO
+      }
+
+      // Afficher le bandeau GPO dans l'en-tête
+      const gpoBanner = document.getElementById("gpo-banner");
+      if (gpoBanner) {
+        gpoBanner.style.display = "inline-flex";
+      }
+
+      // Politique de verrouillage total
+      if (managedData.policyDisableManualEdits === true) {
+        // Cacher tous les panneaux sauf un écran de verrouillage
+        const container = document.querySelector(".panel-container");
+        if (container) {
+          container.innerHTML = `
+            <div class="card" style="border: 1px dashed #d97706; background-color: rgba(245, 158, 11, 0.05); padding: 40px; text-align: center; margin-top: 20px;">
+              <span style="font-size: 48px; display: block; margin-bottom: 20px;">🔒</span>
+              <h2 style="color: #fbbf24; margin-bottom: 12px; font-weight: 600;">Configuration verrouillée par l'administrateur</h2>
+              <p style="color: var(--text-secondary); max-width: 500px; margin: 0 auto 24px auto; font-size: 14px;">
+                Votre collectivité ou organisation gère la configuration de l'extension AnonymAI à distance. Toutes les options ont été verrouillées conformément à la politique de sécurité.
+              </p>
+              <div style="font-family: monospace; font-size: 12px; color: var(--text-secondary); background: #0f172a; padding: 12px; border-radius: 6px; display: inline-block;">
+                Politique active : policyDisableManualEdits = true
+              </div>
+            </div>
+          `;
+        }
+        // Désactiver le menu latéral
+        document.querySelectorAll(".menu-item").forEach(btn => {
+          if (btn.getAttribute("data-tab") !== "billing-tab") {
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+            btn.style.cursor = "not-allowed";
+          }
+        });
+        return;
+      }
+
+      // Politiques individuelles
+      if (managedData.globalContext !== undefined) {
+        systemContextTextarea.value = managedData.globalContext;
+        systemContextTextarea.disabled = true;
+        saveContextBtn.disabled = true;
+        addManagedBadge(systemContextTextarea);
+      }
+
+      if (managedData.forcedElements !== undefined) {
+        addForceInput.disabled = true;
+        addForceBtn.disabled = true;
+        addManagedBadge(addForceInput);
+      }
+
+      if (managedData.excludedElements !== undefined) {
+        addExcludeInput.disabled = true;
+        addExcludeBtn.disabled = true;
+        addManagedBadge(addExcludeInput);
+      }
+
+      if (managedData.licenseKey !== undefined) {
+        const licenseInput = document.getElementById("license-key-input");
+        const activateBtn = document.getElementById("activate-license-btn");
+        if (licenseInput) {
+          licenseInput.value = managedData.licenseKey;
+          licenseInput.disabled = true;
+        }
+        if (activateBtn) activateBtn.disabled = true;
+        addManagedBadge(licenseInput);
+      }
+    });
+  }
+
+  function addManagedBadge(targetElement) {
+    if (!targetElement) return;
+    const parent = targetElement.parentElement;
+    if (!parent) return;
+    
+    if (parent.querySelector(".managed-badge")) return;
+    
+    const badge = document.createElement("span");
+    badge.className = "managed-badge";
+    badge.style.display = "inline-block";
+    badge.style.fontSize = "11px";
+    badge.style.color = "#fbbf24";
+    badge.style.backgroundColor = "rgba(245, 158, 11, 0.15)";
+    badge.style.padding = "2px 8px";
+    badge.style.borderRadius = "4px";
+    badge.style.marginTop = "6px";
+    badge.style.fontWeight = "500";
+    badge.textContent = "🔒 Géré par l'administrateur";
+    
+    parent.appendChild(badge);
+  }
+
+  // --- GESTION LICENCE & STRIPE ---
+  function initLicenseAndBilling() {
+    const activateBtn = document.getElementById("activate-license-btn");
+    const licenseInput = document.getElementById("license-key-input");
+
+    if (activateBtn && licenseInput) {
+      activateBtn.addEventListener("click", () => {
+        const key = licenseInput.value.trim();
+        if (!key) {
+          showToast("Veuillez entrer une clé de licence.", true);
+          return;
+        }
+        
+        chrome.runtime.sendMessage({ action: "set_license_key", licenseKey: key }, (response) => {
+          if (chrome.runtime.lastError) {
+            showToast("Erreur de communication avec l'extension.", true);
+            return;
+          }
+          if (response && response.success) {
+            updateLicenseStatusUI(response.status);
+            if (response.status.active) {
+              showToast("Licence activée avec succès ! Merci de votre confiance.");
+            } else {
+              showToast("Clé de licence invalide ou expirée.", true);
+            }
+          }
+        });
+      });
+    }
+
+    // Charger l'état au démarrage
+    chrome.runtime.sendMessage({ action: "check_license" }, (response) => {
+      if (chrome.runtime.lastError) return;
+      if (response && response.status) {
+        updateLicenseStatusUI(response.status);
+      }
+    });
+  }
+
+  function updateLicenseStatusUI(status) {
+    const statusIcon = document.getElementById("billing-status-icon");
+    const statusTitle = document.getElementById("billing-status-title");
+    const statusDesc = document.getElementById("billing-status-desc");
+    const checkoutLink = document.getElementById("stripe-checkout-link");
+    const portalLink = document.getElementById("stripe-portal-link");
+    const licenseInput = document.getElementById("license-key-input");
+
+    if (!statusIcon || !statusTitle || !statusDesc) return;
+
+    if (status.reason === "managed") {
+      statusIcon.textContent = "🏢";
+      statusTitle.textContent = "Licence d'organisation active";
+      statusTitle.style.color = "var(--accent-color)";
+      statusDesc.textContent = "Votre collectivité ou entreprise gère l'abonnement centralisé. Aucune action requise.";
+      if (checkoutLink) checkoutLink.style.display = "none";
+      if (portalLink) portalLink.style.display = "none";
+      unlockOptionsPage();
+    } 
+    else if (status.reason === "subscribed") {
+      statusIcon.textContent = "✅";
+      statusTitle.textContent = "Abonnement AnonymAI Premium actif";
+      statusTitle.style.color = "var(--accent-color)";
+      statusDesc.textContent = "Merci pour votre confiance ! Votre licence est active et valide.";
+      if (checkoutLink) checkoutLink.style.display = "none";
+      if (portalLink) portalLink.style.display = "inline-flex";
+      if (licenseInput) licenseInput.value = status.licenseKey || "";
+      unlockOptionsPage();
+    } 
+    else if (status.reason === "trial") {
+      statusIcon.textContent = "⏳";
+      statusTitle.textContent = `Période d'essai active`;
+      statusTitle.style.color = "var(--text-primary)";
+      statusDesc.textContent = `Il vous reste ${status.daysRemaining} jours d'essai gratuit de votre application locale.`;
+      if (checkoutLink) checkoutLink.style.display = "inline-flex";
+      if (portalLink) portalLink.style.display = "none";
+      unlockOptionsPage();
+    } 
+    else { // expired
+      statusIcon.textContent = "🚫";
+      statusTitle.textContent = "Abonnement expiré";
+      statusTitle.style.color = "#f43f5e";
+      statusDesc.textContent = "Votre période d'essai de 30 jours est terminée. Veuillez vous abonner pour réactiver les fonctionnalités.";
+      if (checkoutLink) checkoutLink.style.display = "inline-flex";
+      if (portalLink) portalLink.style.display = "none";
+      lockOptionsPageExpired();
+    }
+  }
+
+  function lockOptionsPageExpired() {
+    document.querySelectorAll(".menu-item").forEach(btn => {
+      if (btn.getAttribute("data-tab") !== "billing-tab") {
+        btn.disabled = true;
+        btn.style.opacity = "0.5";
+        btn.style.cursor = "not-allowed";
+      }
+    });
+
+    const billingBtn = document.querySelector('.menu-item[data-tab="billing-tab"]');
+    if (billingBtn) {
+      document.querySelectorAll(".menu-item").forEach(mi => mi.classList.remove("active"));
+      billingBtn.classList.add("active");
+      billingBtn.disabled = false;
+      billingBtn.style.opacity = "1";
+      billingBtn.style.cursor = "pointer";
+
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      const billingPanel = document.getElementById("billing-tab");
+      if (billingPanel) billingPanel.classList.add("active");
+      if (tabTitle) tabTitle.textContent = "Abonnement & Licence";
+    }
+  }
+
+  function unlockOptionsPage() {
+    document.querySelectorAll(".menu-item").forEach(btn => {
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      btn.style.cursor = "pointer";
+    });
+  }
+
   // Charger la configuration à l'ouverture de la page
   loadConfiguration();
+  initLicenseAndBilling();
+  checkGPOLockedStatus();
+
+  // Activer l'onglet ciblé par le hash URL si présent (ex: #billing-tab)
+  const hash = window.location.hash;
+  if (hash) {
+    const tabName = hash.replace("#", "");
+    const targetMenuItem = document.querySelector(`.menu-item[data-tab="${tabName}"]`);
+    if (targetMenuItem) {
+      setTimeout(() => {
+        targetMenuItem.click();
+      }, 50);
+    }
+  }
 });
 

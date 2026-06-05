@@ -3,10 +3,16 @@
   "name": "AnonymAI - Protection Locale RGPD",
   "version": "1.0.0",
   "description": "Pseudonymise localement vos prompts et documents avant envoi aux IA, et restaure les correspondances de session en vert.",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "permissions": [
     "storage",
     "contextMenus",
-    "downloads"
+    "downloads",
+    "offscreen"
   ],
   "host_permissions": [
     "https://gemini.google.com/*",
@@ -18,7 +24,15 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "AnonymAI"
+    "default_title": "AnonymAI",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "storage": {
+    "managed_schema": "schema.json"
   },
   "options_page": "options.html",
   "content_scripts": [
@@ -43,7 +57,8 @@
     {
       "resources": [
         "lib/pdf.mjs",
-        "lib/pdf.worker.mjs"
+        "lib/pdf.worker.mjs",
+        "lib/tesseract/*"
       ],
       "matches": [
         "https://gemini.google.com/*",

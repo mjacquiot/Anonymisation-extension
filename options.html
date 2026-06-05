@@ -36,6 +36,9 @@
         <button class="menu-item" data-tab="advanced-tab">
           <span class="menu-icon">⚙️</span> Options Avancées
         </button>
+        <button class="menu-item" data-tab="billing-tab">
+          <span class="menu-icon">💳</span> Abonnement & Licence
+        </button>
       </nav>
       <div class="sidebar-footer">
         <span>Version 1.0.0 • Traitement 100% Local</span>
@@ -45,8 +48,11 @@
     <!-- Main Content Area -->
     <main class="main-content">
       <!-- Top Bar -->
-      <header class="topbar">
+      <header class="topbar" style="display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
         <h1 id="tab-title">Contexte Système</h1>
+        <div id="gpo-banner" class="gpo-banner hidden" style="display: none; align-items: center; gap: 8px; background-color: rgba(245, 158, 11, 0.1); border: 1px dashed #d97706; color: #fbbf24; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;">
+          🔒 Options gérées et verrouillées par votre administrateur.
+        </div>
         <div id="toast" class="toast hidden">Paramètres enregistrés !</div>
       </header>
 
@@ -396,6 +402,38 @@
                     <button id="bulk-import-confirm-btn" class="btn btn-primary" style="background-color: var(--accent-color); border-color: var(--accent-color);">Confirmer l'import</button>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 6: Abonnement & Licence -->
+        <section id="billing-tab" class="panel">
+          <div class="card">
+            <div class="card-header">
+              <h2>État de l'abonnement</h2>
+              <p>Gérez votre souscription à AnonymAI et activez les fonctionnalités professionnelles pour votre usage ou celui de votre organisation.</p>
+            </div>
+            <div class="card-body">
+              <div class="billing-status-container" style="display: flex; gap: 24px; align-items: center; padding: 20px; border: 1px solid var(--border-color); border-radius: 8px; background-color: rgba(15, 23, 42, 0.2); margin-bottom: 24px;">
+                <div class="billing-status-icon" style="font-size: 48px;" id="billing-status-icon">⏳</div>
+                <div style="flex: 1;">
+                  <strong style="display: block; font-size: 16px; margin-bottom: 4px; color: var(--text-primary);" id="billing-status-title">Période d'essai active</strong>
+                  <span style="font-size: 13px; color: var(--text-secondary);" id="billing-status-desc">Chargement des détails de votre licence...</span>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center;" id="billing-actions-container">
+                  <a href="https://checkout.stripe.com/demo-anonymai" id="stripe-checkout-link" target="_blank" class="btn btn-primary" style="background-color: var(--accent-color); border-color: var(--accent-color); text-decoration: none; display: inline-flex; align-items: center; justify-content: center; height: 38px; padding: 0 16px; font-weight: 500; font-size: 13px;">S'abonner (0,99€/mois)</a>
+                  <a href="https://billing.stripe.com/demo-portal" id="stripe-portal-link" target="_blank" class="btn btn-secondary" style="text-decoration: none; display: none; align-items: center; justify-content: center; height: 38px; padding: 0 16px; font-weight: 500; font-size: 13px;">Gérer mon abonnement</a>
+                </div>
+              </div>
+
+              <div class="form-group" style="max-width: 500px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 500;">Clé de licence ou Email d'abonné</label>
+                <div style="display: flex; gap: 12px;">
+                  <input type="text" id="license-key-input" placeholder="Saisissez votre clé de licence ou e-mail..." style="flex: 1; padding: 10px; background-color: #0f172a; border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); outline: none;">
+                  <button id="activate-license-btn" class="btn btn-primary">Activer</button>
+                </div>
+                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Si vous avez souscrit à un abonnement Stripe ou possédez un code promo activé, saisissez l'identifiant d'abonnement ou l'e-mail correspondant ci-dessus. Pour tester, saisissez <code>premium_test</code>.</p>
               </div>
             </div>
           </div>
